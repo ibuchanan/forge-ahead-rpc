@@ -1,5 +1,6 @@
 import Ajv from "ajv";
 import standaloneCode from "ajv/dist/standalone/index.js";
+import { methodMetadata } from "../src/exposure";
 
 type Obj = Record<string, unknown>;
 const schemaKeys = new Set([
@@ -201,15 +202,24 @@ export function generateContract(document: unknown, source: string) {
     removeAdditional: false,
   });
   const entries: string[] = [];
+  const policy: Record<
+    string,
+    { execution: "asApp" | "asUser"; audit: "standard" | "critical" }
+  > = {};
   const exports: Record<string, string> = {};
   const names = new Set<string>();
   methods.forEach((value, index) => {
     const where = `methods[${index}]`;
     const method = object(value, where);
+    const metadata = methodMetadata(method);
     const name = method["name"];
     if (typeof name !== "string" || !methodName.test(name) || names.has(name))
       fail(where, `invalid or duplicate method name ${String(name)}`);
+    if (name === "rpc.discover")
+      fail(where, "reserved method name rpc.discover");
     names.add(name);
+    if (metadata.web === true && metadata.execution && metadata.audit)
+      policy[name] = { execution: metadata.execution, audit: metadata.audit };
     if (method["paramStructure"] !== "by-name")
       fail(where, "by-name params required");
     const params = list(method["params"], `${where}.params`);
@@ -261,5 +271,10 @@ export function generateContract(document: unknown, source: string) {
   const keys = [...names];
   const validators = `${heading}${code}\nexport const inputValidators = { ${keys.map((key, i) => `${JSON.stringify(key)}: input${i}`).join(", ")} };\nexport const outputValidators = { ${keys.map((key, i) => `${JSON.stringify(key)}: output${i}`).join(", ")} };\n`;
   const declarations = `${heading}import type { Commands } from "./contract";\ntype Validate<T> = (value: unknown) => value is T;\nexport const inputValidators: { [M in keyof Commands]: Validate<Commands[M]["params"]> };\nexport const outputValidators: { [M in keyof Commands]: Validate<Commands[M]["result"]> };\n`;
-  return { contract, validators, declarations };
+  return {
+    contract,
+    validators,
+    declarations,
+    policy: `${heading}export const webPolicy = ${JSON.stringify(policy, null, 2)} as const;\n`,
+  };
 }

@@ -19,6 +19,7 @@ const files = {
   "contract.ts": artifacts.contract,
   "validators.js": artifacts.validators,
   "validators.d.ts": artifacts.declarations,
+  "web-policy.ts": artifacts.policy,
 };
 if (mode === "generate") mkdirSync(out, { recursive: true });
 for (const [name, content] of Object.entries(files)) {

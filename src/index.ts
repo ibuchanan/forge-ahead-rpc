@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "@forge-ahead/errors";
+import { type Mode, methodMetadata, webDocument } from "./exposure";
 
 /** Execute one catalog command without JSON-RPC framing. */
 export function createExecutor<Context>(options: Options<Context>) {
@@ -45,7 +46,101 @@ type Options<Context> = {
   handlers: Record<string, Handler<Context>>;
   inputValidators: Record<string, Validator>;
   outputValidators: Record<string, Validator>;
+  web?: (
+    method: string,
+    context: Context,
+  ) =>
+    | { kind: "unknown" | "denied" }
+    | { kind: "discovery"; document: unknown }
+    | undefined;
 };
+export type WebOptions<Context> = Options<Context> & {
+  /** Generated reviewed maximum; must match the catalog before serving requests. */
+  webPolicy: Record<
+    string,
+    { execution: Mode; audit: "standard" | "critical" }
+  >;
+  catalog: {
+    openrpc: string;
+    info: Record<string, unknown>;
+    methods: Record<string, unknown>[];
+    components?: Record<string, unknown>;
+  };
+  /** Trusted installation selection; absence exposes no application method. */
+  selection?: (context: Context) => Record<string, Mode>;
+  /** App-owned authorization (not authentication); defaults to deny. */
+  authorize?: (method: string, mode: Mode, context: Context) => boolean;
+};
+
+/** Create views and a web-scoped in-memory dispatcher; caller authenticates before invoking dispatch. */
+export function createWebDispatcher<Context>(options: WebOptions<Context>) {
+  const eligible = new Map<string, Mode>();
+  const reviewed: Record<
+    string,
+    { execution: Mode; audit: "standard" | "critical" }
+  > = {};
+  for (const method of options.catalog.methods) {
+    if (method["name"] === "rpc.discover")
+      throw new Error("reserved method name rpc.discover");
+    const meta = methodMetadata(method);
+    if (
+      meta.web === true &&
+      meta.execution &&
+      meta.audit &&
+      typeof method["name"] === "string"
+    ) {
+      eligible.set(method["name"], meta.execution);
+      reviewed[method["name"]] = {
+        execution: meta.execution,
+        audit: meta.audit,
+      };
+    }
+  }
+  if (
+    Object.keys(reviewed).length !== Object.keys(options.webPolicy).length ||
+    Object.entries(reviewed).some(
+      ([name, policy]) =>
+        !Object.hasOwn(options.webPolicy, name) ||
+        options.webPolicy[name]?.execution !== policy.execution ||
+        options.webPolicy[name]?.audit !== policy.audit,
+    )
+  )
+    throw new Error("reviewed web policy drift; regenerate contract");
+  const routable = (name: string) =>
+    Object.hasOwn(options.handlers, name) &&
+    Object.hasOwn(options.inputValidators, name) &&
+    Object.hasOwn(options.outputValidators, name);
+  const maximum = new Set([...eligible.keys()].filter(routable));
+  const publicDocument = webDocument(options.catalog, maximum);
+  const selected = (context: Context) => {
+    const selection = options.selection?.(context) ?? {};
+    return new Set(
+      [...maximum].filter(
+        (name) =>
+          Object.hasOwn(selection, name) &&
+          selection[name] === eligible.get(name),
+      ),
+    );
+  };
+  const dispatch = createDispatcher({
+    ...options,
+    web: (name, context) => {
+      const exposed = selected(context);
+      if (name === "rpc.discover")
+        return {
+          kind: "discovery",
+          document: webDocument(options.catalog, exposed),
+        } as const;
+      if (!exposed.has(name)) return { kind: "unknown" } as const;
+      const mode = eligible.get(name);
+      if (!mode || !options.authorize?.(name, mode, context))
+        return { kind: "denied" } as const;
+      return undefined;
+    },
+  });
+  return { publicDocument, dispatch };
+}
+
 type Response =
   | { jsonrpc: "2.0"; id: string | number | null; result: unknown }
   | {
@@ -100,6 +195,20 @@ export function createDispatcher<Context>(
       Array.isArray(value["params"])
     ) {
       return error(-32600, "Invalid request");
+    }
+    if (options.web) {
+      let gate: ReturnType<NonNullable<Options<Context>["web"]>>;
+      try {
+        gate = options.web(value["method"], context);
+      } catch {
+        return error(-32603, "Internal error");
+      }
+      if (gate?.kind === "unknown") return error(-32601, "Method not found");
+      if (gate?.kind === "denied") return error(-32001, "Not permitted");
+      if (gate?.kind === "discovery")
+        return Object.keys(value["params"] as object).length === 0
+          ? { jsonrpc: "2.0", id, result: gate.document }
+          : error(-32602, "Invalid params");
     }
     const outcome = await execute(value["method"], value["params"], context);
     if (outcome.isOk()) return { jsonrpc: "2.0", id, result: outcome.value };

@@ -1,18 +1,33 @@
 {
   "openrpc": "1.3.2",
   "info": { "title": "Greeting tracer", "version": "1.0.0" },
-  "methods": [{
-    "name": "greeting.hello",
-    "paramStructure": "by-name",
-    "params": [{ "name": "name", "required": true, "schema": { "type": "string" } }],
-    "result": { "name": "greeting", "schema": {
-      "type": "object", "properties": { "message": { "type": "string" } },
-      "required": ["message"], "additionalProperties": false
-    } }
-  }, {
-    "name": "greeting.ping",
-    "paramStructure": "by-name",
-    "params": [],
-    "result": { "name": "pong", "schema": { "type": "boolean" } }
-  }]
+  "methods": [
+    {
+      "name": "greeting.hello",
+      "x-forge-ahead": {
+        "web": true,
+        "execution": "asUser",
+        "audit": "standard"
+      },
+      "paramStructure": "by-name",
+      "params": [
+        { "name": "name", "required": true, "schema": { "type": "string" } }
+      ],
+      "result": {
+        "name": "greeting",
+        "schema": {
+          "type": "object",
+          "properties": { "message": { "type": "string" } },
+          "required": ["message"],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "name": "greeting.ping",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": { "name": "pong", "schema": { "type": "boolean" } }
+    }
+  ]
 }

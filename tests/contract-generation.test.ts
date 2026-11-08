@@ -63,9 +63,29 @@ test("CLI drift check compares without changing artifacts", () => {
       "contract.ts",
       "validators.d.ts",
       "validators.js",
+      "web-policy.ts",
     ]);
     const before = readFileSync(join(out, "contract.ts"), "utf8");
     expect(run("check").status).toBe(0);
+    writeFileSync(
+      spec,
+      JSON.stringify({
+        ...doc,
+        methods: [
+          {
+            ...doc.methods[0],
+            "x-forge-ahead": {
+              web: true,
+              execution: "asApp",
+              audit: "critical",
+            },
+          },
+          ...doc.methods.slice(1),
+        ],
+      }),
+    );
+    expect(run("check").status).not.toBe(0);
+    expect(readFileSync(join(out, "contract.ts"), "utf8")).toBe(before);
     writeFileSync(spec, JSON.stringify({ ...doc, methods: [doc.methods[1]] }));
     expect(run("check").status).not.toBe(0);
     expect(readFileSync(join(out, "contract.ts"), "utf8")).toBe(before);
