@@ -242,6 +242,89 @@ test("credential-bearing query or params are rejected before authentication and 
   expect(calls).toEqual([]);
 });
 
+test("asUser uses Jira-verified identity and never falls back to asApp", async () => {
+  const executed: string[] = [];
+  const checked: string[] = [];
+  let forgeCanAct = false;
+  const asUserCatalog = {
+    ...catalog,
+    methods: [
+      {
+        ...catalog.methods[0],
+        "x-forge-ahead": {
+          web: true,
+          execution: "asUser",
+          audit: "standard",
+        },
+      },
+    ],
+  };
+  const handle = createWebtrigger({
+    ...options,
+    catalog: asUserCatalog,
+    webPolicy: {
+      "write.one": { execution: "asUser" as const, audit: "standard" as const },
+    },
+    selection: () => ({ "write.one": "asUser" as const }),
+    authenticate: createJiraAdminAuthenticator(async (url) =>
+      url.endsWith("/myself")
+        ? { status: 200, body: { accountId: "jira-verified" } }
+        : {
+            status: 200,
+            body: { permissions: { ADMINISTER: { havePermission: true } } },
+          },
+    ),
+    installation: (context: { installation: { jiraSiteUrl: string } }) =>
+      context.installation,
+    context: (
+      _installation: { jiraSiteUrl: string },
+      principal: { accountId: string },
+    ) => ({ principal }),
+    canActAsUser: async (context: { principal: { accountId: string } }) => {
+      checked.push(context.principal.accountId);
+      return forgeCanAct;
+    },
+    handlers: {
+      "write.one": async (
+        _: never,
+        context: { principal: { accountId: string } },
+      ) => {
+        executed.push(context.principal.accountId);
+        return ok("saved");
+      },
+    },
+  });
+  const input = request({
+    headers: {
+      "Content-Type": ["application/json"],
+      Authorization: [
+        `Basic ${Buffer.from("claim@example.test:api-token").toString("base64")}`,
+      ],
+    },
+    body: body("write.one", { accountId: "forged" }),
+  });
+  const trusted = {
+    installation: { jiraSiteUrl: "https://trusted.atlassian.net" },
+  };
+  const denied = await handle(input, trusted);
+  expect(denied.statusCode).toBe(200);
+  expect(JSON.parse(denied.body)).toEqual({
+    jsonrpc: "2.0",
+    id: 7,
+    error: { code: -32001, message: "Not permitted" },
+  });
+  expect(executed).toEqual([]);
+  forgeCanAct = true;
+  const permitted = await handle(input, trusted);
+  expect(JSON.parse(permitted.body)).toEqual({
+    jsonrpc: "2.0",
+    id: 7,
+    result: "saved",
+  });
+  expect(checked).toEqual(["jira-verified", "jira-verified"]);
+  expect(executed).toEqual(["jira-verified"]);
+});
+
 test("authenticated POST returns a Forge JSON response with trusted context", async () => {
   calls.length = 0;
   const handle = createWebtrigger(options);

@@ -52,7 +52,12 @@ type Options<Context> = {
   ) =>
     | { kind: "unknown" | "denied" }
     | { kind: "discovery"; document: unknown }
-    | undefined;
+    | undefined
+    | Promise<
+        | { kind: "unknown" | "denied" }
+        | { kind: "discovery"; document: unknown }
+        | undefined
+      >;
 };
 export type WebOptions<Context> = Options<Context> & {
   /** Generated reviewed maximum; must match the catalog before serving requests. */
@@ -70,6 +75,8 @@ export type WebOptions<Context> = Options<Context> & {
   selection?: (context: Context) => Record<string, Mode>;
   /** App-owned authorization (not authentication); defaults to deny. */
   authorize?: (method: string, mode: Mode, context: Context) => boolean;
+  /** Confirm Forge can act as the Jira-verified user in trusted context; required for asUser. */
+  canActAsUser?: (context: Context) => boolean | Promise<boolean>;
 };
 
 /** Create views and a web-scoped in-memory dispatcher; caller authenticates before invoking dispatch. */
@@ -124,7 +131,7 @@ export function createWebDispatcher<Context>(options: WebOptions<Context>) {
   };
   const dispatch = createDispatcher({
     ...options,
-    web: (name, context) => {
+    web: async (name, context) => {
       const exposed = selected(context);
       if (name === "rpc.discover")
         return {
@@ -135,6 +142,14 @@ export function createWebDispatcher<Context>(options: WebOptions<Context>) {
       const mode = eligible.get(name);
       if (!mode || !options.authorize?.(name, mode, context))
         return { kind: "denied" } as const;
+      if (mode === "asUser") {
+        try {
+          if ((await options.canActAsUser?.(context)) !== true)
+            return { kind: "denied" } as const;
+        } catch {
+          return { kind: "denied" } as const;
+        }
+      }
       return undefined;
     },
   });
@@ -197,9 +212,9 @@ export function createDispatcher<Context>(
       return error(-32600, "Invalid request");
     }
     if (options.web) {
-      let gate: ReturnType<NonNullable<Options<Context>["web"]>>;
+      let gate: Awaited<ReturnType<NonNullable<Options<Context>["web"]>>>;
       try {
-        gate = options.web(value["method"], context);
+        gate = await options.web(value["method"], context);
       } catch {
         return error(-32603, "Internal error");
       }

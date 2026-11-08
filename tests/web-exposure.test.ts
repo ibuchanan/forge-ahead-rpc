@@ -211,11 +211,87 @@ test("reserved discovery name cannot become an application method", () => {
   ).toThrow(/reserved/);
 });
 
+test("selected asUser method needs an explicit Forge user-context check", async () => {
+  let calls = 0;
+  const web = createWebDispatcher({
+    ...options,
+    handlers: {
+      ...options.handlers,
+      "public.one": async () => {
+        calls++;
+        return ok("done");
+      },
+    },
+    selection: () => ({ "public.one": "asUser", "public.two": "asApp" }),
+    authorize: () => true,
+  });
+  expect(await web.dispatch(request("public.one"), {})).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { code: -32001, message: "Not permitted" },
+  });
+  expect(await web.dispatch(request("public.two"), {})).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    result: true,
+  });
+  expect(calls).toBe(0);
+});
+
+test("app-owned policy can deny a method for one installation but allow another", async () => {
+  const web = createWebDispatcher({
+    ...options,
+    selection: () => ({ "public.two": "asApp" }),
+    authorize: (_name, _mode, context: { installation: string }) =>
+      context.installation === "enabled",
+  });
+  expect(
+    await web.dispatch(request("public.two"), { installation: "disabled" }),
+  ).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { code: -32001, message: "Not permitted" },
+  });
+  expect(
+    await web.dispatch(request("public.two"), { installation: "enabled" }),
+  ).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    result: true,
+  });
+});
+
+test("Forge user-context failure denies without exposing the exception", async () => {
+  let calls = 0;
+  const web = createWebDispatcher({
+    ...options,
+    handlers: {
+      ...options.handlers,
+      "public.one": async () => {
+        calls++;
+        return ok("done");
+      },
+    },
+    selection: () => ({ "public.one": "asUser" }),
+    authorize: () => true,
+    canActAsUser: async () => {
+      throw new Error("private Forge detail");
+    },
+  });
+  expect(await web.dispatch(request("public.one"), {})).toEqual({
+    jsonrpc: "2.0",
+    id: 1,
+    error: { code: -32001, message: "Not permitted" },
+  });
+  expect(calls).toBe(0);
+});
+
 test("selected, authorized method executes through the existing validators", async () => {
   let mode: string | undefined;
   const web = createWebDispatcher({
     ...options,
     selection: () => ({ "public.one": "asUser" }),
+    canActAsUser: () => true,
     authorize: (_method, chosen) => {
       mode = chosen;
       return true;
