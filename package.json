@@ -61,9 +61,13 @@
     "npm-run-all2": "9.0.3",
     "publint": "0.3.25",
     "tsdown": "0.23.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
-    "neverthrow": "^8.2"
-  }
+    "@forge-ahead/errors": "github:ibuchanan/forge-ahead-errors"
+  },
+  "trustedDependencies": [
+    "@forge-ahead/errors"
+  ]
 }

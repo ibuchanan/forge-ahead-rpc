@@ -1,14 +1,38 @@
-# Reference
+# In-memory command and JSON-RPC reference
 
-This is just a placeholder.
-Remove this file
-when a real reference is ready.
+`createExecutor(options)` returns `execute(method, params, trustedContext)`,
+a promise of `@forge-ahead/errors` `Result`. The caller supplies trusted
+context separately from untrusted params; request fields never become context.
+`options` holds `handlers`, `inputValidators`, and `outputValidators`, all
+keyed by wire method name. A method requires all three entries to be routable.
+Handlers return a promise of a semantic `Result`; expected error values are
+not exposed to RPC callers. The executor returns `method-not-found`,
+`invalid-params`, `command-failed`, or `internal-error` on failure. Validation
+and handler exceptions map to `internal-error` except rejected input, which
+maps to `invalid-params`.
 
-[Diataxis](https://diataxis.fr/reference/) explains:
+`createDispatcher(options)` returns `dispatch(request, trustedContext)`, a
+promise of one JSON-RPC response. `request` may be a parsed value or a JSON
+string. It supports a **single-call subset of JSON-RPC 2.0**, not full
+conformance: a single object with exactly `jsonrpc: "2.0"`, nonempty string
+`method`, named object `params`, and required string or finite-number `id`.
+Empty params objects and empty string IDs are valid. Batches, notifications,
+positional arrays, null/non-finite IDs, and extra envelope fields are rejected
+before execution. No authentication, exposure policy, HTTP handling, or Forge
+context is provided by this in-memory API.
 
-> Reference guides are technical descriptions of the machinery and how to
-> operate it. Reference material is information-oriented.
+| Condition | Code | Message | Response ID |
+| --- | ---: | --- | --- |
+| Malformed JSON string | -32700 | Parse error | `null` |
+| Invalid envelope or unsupported form | -32600 | Invalid request | Valid supplied ID, otherwise `null` |
+| Unknown or incompletely configured method | -32601 | Method not found | Supplied ID |
+| Invalid named params | -32602 | Invalid params | Supplied ID |
+| Handler's expected failure | -32000 | Command failed | Supplied ID |
+| Exception or invalid successful output | -32603 | Internal error | Supplied ID |
 
-In the context of Forge sample apps,
-typical reference docs will capture APIs
-surfaced by webtriggers or `apiRoute`.
+Successful calls return `{ "jsonrpc": "2.0", "id": …, "result": … }`.
+Error calls return `{ "jsonrpc": "2.0", "id": …, "error": { "code": …,
+"message": … } }`. Error messages contain no handler or validator detail.
+An output validation failure can occur **after a handler's side effect**;
+the dispatcher neither rolls it back nor retries it. IDs correlate responses
+only; they do not provide idempotency or replay protection.

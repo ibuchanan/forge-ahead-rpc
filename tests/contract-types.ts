@@ -1,4 +1,4 @@
-import { ok } from "neverthrow";
+import { ok } from "@forge-ahead/errors";
 import type { Caller, HandlerMap } from "../examples/tracer/generated/contract";
 
 const handlers = {

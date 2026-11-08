@@ -250,7 +250,7 @@ export function generateContract(document: unknown, source: string) {
     );
   });
   const heading = `// Generated from ${source}; do not edit.\n`;
-  const contract = `${heading}import type { Result } from "neverthrow";\n\nexport interface Commands {\n${entries.map((entry) => `  ${entry}`).join("\n")}\n}\nexport type HandlerMap<Context, Failure> = {\n  [M in keyof Commands]: (params: Commands[M]["params"], context: Context) => Promise<Result<Commands[M]["result"], Failure>>;\n};\nexport type Caller = <M extends keyof Commands>(method: M, params: Commands[M]["params"]) => Promise<Commands[M]["result"]>;\n`;
+  const contract = `${heading}import type { Result } from "@forge-ahead/errors";\n\nexport interface Commands {\n${entries.map((entry) => `  ${entry}`).join("\n")}\n}\nexport type HandlerMap<Context, Failure> = {\n  [M in keyof Commands]: (params: Commands[M]["params"], context: Context) => Promise<Result<Commands[M]["result"], Failure>>;\n};\nexport type Caller = <M extends keyof Commands>(method: M, params: Commands[M]["params"]) => Promise<Commands[M]["result"]>;\n`;
   // Ajv emits a CommonJS helper for UTF-16 code-point length even with esm: true.
   const code = standaloneCode(ajv, exports).replaceAll(
     'require("ajv/dist/runtime/ucs2length").default',

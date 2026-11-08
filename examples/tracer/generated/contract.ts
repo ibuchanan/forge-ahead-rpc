@@ -1,5 +1,5 @@
 // Generated from openrpc.json; do not edit.
-import type { Result } from "neverthrow";
+import type { Result } from "@forge-ahead/errors";
 
 export interface Commands {
   "greeting.hello": { params: { "name": string }; result: { "message": string } };
