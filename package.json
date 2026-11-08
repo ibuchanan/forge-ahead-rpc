@@ -16,6 +16,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./webtrigger": {
+      "import": {
+        "types": "./dist/webtrigger.d.ts",
+        "default": "./dist/webtrigger.mjs"
+      },
+      "require": {
+        "types": "./dist/webtrigger.d.cts",
+        "default": "./dist/webtrigger.cjs"
+      }
     }
   },
   "main": "dist/index.cjs",

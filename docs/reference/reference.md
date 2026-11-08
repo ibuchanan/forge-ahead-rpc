@@ -45,3 +45,36 @@ only; they do not provide idempotency or replay protection.
 `createWebDispatcher({ catalog, webPolicy, handlers, inputValidators, outputValidators, selection, authorize })` returns `{ publicDocument, dispatch }`. Supply the authoritative OpenRPC document, generated `webPolicy` from that document, and the same complete handler/validator maps as `createDispatcher`. A policy/catalog mismatch fails at construction; it cannot widen the reviewed maximum. `publicDocument` is the maximum web-eligible OpenRPC view (not current availability); its method set is limited to fully routable methods. `selection(trustedContext)` supplies a trusted per-installation name-to-`asApp`/`asUser` map. If absent, nothing is selected. A name is exposed only when it is web-eligible, routable, selected, and its selected mode matches the reviewed mode. Selection may change between calls. `authorize(method, mode, trustedContext)` is app-owned and defaults to deny; it does not select a different execution mode.
 
 `dispatch` expects authentication to have already completed. `rpc.discover` accepts empty named params and returns an OpenRPC view of the current selected methods; discovery is not an authorization grant. Unknown and unexposed methods both return `-32601 Method not found`; exposed methods denied by `authorize` return `-32001 Not permitted`. Both views omit internal methods, private extension metadata, and unreferenced component schemas. Do not use this in-memory API as a webtrigger on its own: it provides no authentication, Forge context checks, HTTP ingress, or audit publishing. These are separate integration prerequisites.
+
+## Forge dynamic webtrigger adapter
+
+Import `createWebtrigger` from `forge-ahead-rpc/webtrigger` (the opt-in
+`./webtrigger` package subpath). Supply the same web dispatcher options plus
+`installation(forgeContext)` (trusted installation identity),
+`authenticate(authorization, installation)` (a fresh verification returning
+`{ kind: "authenticated", principal }`, `{ kind: "unauthorized" }`,
+`{ kind: "forbidden" }`, or `{ kind: "unavailable" }`), and
+`context(installation, principal)` (the trusted handler context). Supply
+`selection` explicitly; no selection or missing configuration fails closed.
+The adapter does **not** implement authentication or provide Forge user
+impersonation: the app must verify credentials and installation binding. A
+webtrigger URL is not an authentication mechanism. Forge's dynamic webtrigger
+must pass its request and invocation context to the returned handler; no
+manifest or deployment is generated here.
+
+Ingress checks run in this order: POST only (405), well-formed array-valued
+headers and no duplicate `Content-Type` or `Authorization` values even across
+header casing (400), `application/json` optionally followed by
+`; charset=utf-8` (415), string body (400), at most 65,536 UTF-8 body bytes
+(413), nonempty authorization header (401), trusted configuration and
+installation (503), then authentication (401 invalid, 403 denied, 503
+unavailable or exception). A successful authentication is required before
+`rpc.discover` or any RPC call. HTTP rejections return
+`Content-Type: application/json; charset=utf-8` and a generic JSON
+`{"error":"Request rejected"}` body, never a JSON-RPC response or raw
+exception. Accepted requests, including JSON-RPC parse, method and validation
+errors, return HTTP 200 with the same content type and the JSON-RPC response
+body. Response headers use Forge's array-valued format. No retry or rollback
+is implied by a 503 after an uncertain operation. The app must ensure its
+custom authenticator meets the security requirements of its deployment;
+this adapter alone does not claim deployed security validation.

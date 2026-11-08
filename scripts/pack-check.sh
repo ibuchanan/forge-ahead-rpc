@@ -9,4 +9,4 @@ trap 'rm -rf "$package_dir"' EXIT
 trap 'exit 1' HUP INT TERM
 npm pack --ignore-scripts --pack-destination "$package_dir"
 publint --strict "$package_dir"/*.tgz
-attw "$package_dir"/*.tgz
+attw --profile node16 "$package_dir"/*.tgz
