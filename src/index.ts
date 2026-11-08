@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "@forge-ahead/errors";
+import type { AuditPhase, AuditReason } from "./audit";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
 
 /** Execute one catalog command without JSON-RPC framing. */
@@ -46,9 +47,11 @@ type Options<Context> = {
   handlers: Record<string, Handler<Context>>;
   inputValidators: Record<string, Validator>;
   outputValidators: Record<string, Validator>;
+  critical?: (method: string) => boolean;
   web?: (
     method: string,
     context: Context,
+    audit?: DispatchAudit,
   ) =>
     | { kind: "unknown" | "denied" }
     | { kind: "discovery"; document: unknown }
@@ -79,8 +82,19 @@ export type WebOptions<Context> = Options<Context> & {
   canActAsUser?: (context: Context) => boolean | Promise<boolean>;
 };
 
+export type DispatchAudit = {
+  emit: (
+    phase: AuditPhase,
+    reason: AuditReason,
+    method?: string,
+  ) => Promise<boolean>;
+};
+
 /** Create views and a web-scoped in-memory dispatcher; caller authenticates before invoking dispatch. */
-export function createWebDispatcher<Context>(options: WebOptions<Context>) {
+export function createWebDispatcher<Context>(
+  options: WebOptions<Context>,
+  requireAudit = false,
+) {
   const eligible = new Map<string, Mode>();
   const reviewed: Record<
     string,
@@ -131,26 +145,29 @@ export function createWebDispatcher<Context>(options: WebOptions<Context>) {
   };
   const dispatch = createDispatcher({
     ...options,
-    web: async (name, context) => {
+    critical: (name) => requireAudit && reviewed[name]?.audit === "critical",
+    web: async (name, context, audit) => {
       const exposed = selected(context);
       if (name === "rpc.discover")
         return {
           kind: "discovery",
           document: webDocument(options.catalog, exposed),
         } as const;
-      if (!exposed.has(name)) return { kind: "unknown" } as const;
+      if (!exposed.has(name)) {
+        await audit?.emit("authorization", "unknown");
+        return { kind: "unknown" } as const;
+      }
       const mode = eligible.get(name);
-      if (!mode || !options.authorize?.(name, mode, context))
-        return { kind: "denied" } as const;
-      if (mode === "asUser") {
+      let allowed = !!mode && options.authorize?.(name, mode, context) === true;
+      if (allowed && mode === "asUser") {
         try {
-          if ((await options.canActAsUser?.(context)) !== true)
-            return { kind: "denied" } as const;
+          allowed = (await options.canActAsUser?.(context)) === true;
         } catch {
-          return { kind: "denied" } as const;
+          allowed = false;
         }
       }
-      return undefined;
+      await audit?.emit("authorization", allowed ? "allowed" : "denied", name);
+      return allowed ? undefined : ({ kind: "denied" } as const);
     },
   });
   return { publicDocument, dispatch };
@@ -167,9 +184,13 @@ type Response =
 /** In-memory single-call JSON-RPC 2.0 subset. Context is supplied by the caller, never the request. */
 export function createDispatcher<Context>(
   options: Options<Context>,
-): (request: unknown, context: Context) => Promise<Response> {
+): (
+  request: unknown,
+  context: Context,
+  audit?: DispatchAudit,
+) => Promise<Response> {
   const execute = createExecutor(options);
-  return async (request, context) => {
+  return async (request, context, audit) => {
     let parsed: unknown = request;
     if (typeof request === "string") {
       try {
@@ -214,7 +235,7 @@ export function createDispatcher<Context>(
     if (options.web) {
       let gate: Awaited<ReturnType<NonNullable<Options<Context>["web"]>>>;
       try {
-        gate = await options.web(value["method"], context);
+        gate = await options.web(value["method"], context, audit);
       } catch {
         return error(-32603, "Internal error");
       }
@@ -225,7 +246,16 @@ export function createDispatcher<Context>(
           ? { jsonrpc: "2.0", id, result: gate.document }
           : error(-32602, "Invalid params");
     }
+    if (options.critical?.(value["method"])) {
+      if (!audit || !(await audit.emit("attempt", "started", value["method"])))
+        return error(-32603, "Internal error");
+    }
     const outcome = await execute(value["method"], value["params"], context);
+    await audit?.emit(
+      "outcome",
+      outcome.isOk() ? "succeeded" : "failed",
+      value["method"],
+    );
     if (outcome.isOk()) return { jsonrpc: "2.0", id, result: outcome.value };
     switch (outcome.error) {
       case "method-not-found":

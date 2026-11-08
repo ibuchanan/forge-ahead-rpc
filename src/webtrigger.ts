@@ -1,3 +1,4 @@
+import { type AuditPort, auditSession } from "./audit";
 import { createWebDispatcher, type WebOptions } from "./index";
 
 /** Forge dynamic webtrigger request shape (no Forge runtime dependency). */
@@ -26,6 +27,8 @@ export type WebtriggerOptions<Context, ForgeContext, Installation, Principal> =
     ) => Promise<Authentication<Principal>>;
     /** Construct handler context only from independently verified values. */
     context: (installation: Installation, principal: Principal) => Context;
+    /** App-provided acknowledged CloudEvents publisher; required for critical methods. */
+    audit?: AuditPort<Installation, Principal>;
   };
 
 /** Internal-use Jira admin verifier. The caller provides a Jira HTTP port; do not use for distributable apps. */
@@ -126,7 +129,24 @@ export function createWebtrigger<
   Installation,
   Principal,
 >(options: WebtriggerOptions<Context, ForgeContext, Installation, Principal>) {
-  const web = createWebDispatcher(options);
+  const web = createWebDispatcher(options, true);
+  if (
+    Object.values(options.webPolicy).some(
+      (policy) => policy.audit === "critical",
+    ) &&
+    !options.audit
+  )
+    throw new Error("critical web methods require an audit publisher");
+  if (
+    options.audit &&
+    (!options.audit.source ||
+      typeof options.audit.identity !== "function" ||
+      typeof options.audit.publish !== "function" ||
+      typeof options.audit.onFailure !== "function" ||
+      !Number.isFinite(options.audit.timeoutMs) ||
+      options.audit.timeoutMs <= 0)
+  )
+    throw new Error("invalid audit configuration");
   return async (
     request: WebtriggerRequest,
     forgeContext: ForgeContext,
@@ -183,25 +203,69 @@ export function createWebtrigger<
     } catch {
       return failure(400);
     }
-    if (!authorizations[0]) return failure(401);
+    if (!authorizations[0]) {
+      if (options.audit && options.installation) {
+        try {
+          const installation = options.installation(forgeContext);
+          if (installation != null)
+            await auditSession(options.audit, installation).emit(
+              "authentication",
+              "invalid-credentials",
+            );
+        } catch {
+          try {
+            options.audit.onFailure("authentication");
+          } catch {
+            /* Preserve 401. */
+          }
+        }
+      }
+      return failure(401);
+    }
     if (!options.installation || !options.authenticate || !options.selection)
       return failure(503);
     try {
       const installation = options.installation(forgeContext);
       if (installation === undefined || installation === null)
         return failure(503);
-      const auth = await options.authenticate(authorizations[0], installation);
-      if (auth.kind === "unauthorized") return failure(401);
-      if (auth.kind === "forbidden") return failure(403);
-      if (
-        auth.kind !== "authenticated" ||
-        !auth.principal ||
-        typeof auth.principal !== "object"
-      )
+      let auth: Authentication<Principal>;
+      try {
+        auth = await options.authenticate(authorizations[0], installation);
+      } catch {
+        await (options.audit &&
+          auditSession(options.audit, installation).emit(
+            "authentication",
+            "unavailable",
+          ));
         return failure(503);
+      }
+      if (auth.kind !== "authenticated") {
+        await (options.audit &&
+          auditSession(options.audit, installation).emit(
+            "authentication",
+            auth.kind === "unauthorized"
+              ? "invalid-credentials"
+              : auth.kind === "forbidden"
+                ? "not-admin"
+                : "unavailable",
+          ));
+        return failure(
+          auth.kind === "unauthorized"
+            ? 401
+            : auth.kind === "forbidden"
+              ? 403
+              : 503,
+        );
+      }
+      if (!auth.principal || typeof auth.principal !== "object")
+        return failure(503);
+      const audit =
+        options.audit &&
+        auditSession(options.audit, installation, auth.principal);
+      await audit?.emit("authentication", "authenticated");
       const context = options.context(installation, auth.principal);
       if (context === undefined || context === null) return failure(503);
-      return json(200, await web.dispatch(request.body, context));
+      return json(200, await web.dispatch(request.body, context, audit));
     } catch {
       return failure(503);
     }

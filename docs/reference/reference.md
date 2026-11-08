@@ -1,7 +1,7 @@
 # In-memory command and JSON-RPC reference
 
 <!-- markdownlint-disable MD013 -->
-<!-- cspell:words mypermissions webtrigger -->
+<!-- cspell:words mypermissions webtrigger specversion -->
 
 `createExecutor(options)` returns `execute(method, params, trustedContext)`,
 a promise of `@forge-ahead/errors` `Result`. The caller supplies trusted
@@ -45,6 +45,39 @@ only; they do not provide idempotency or replay protection.
 `createWebDispatcher({ catalog, webPolicy, handlers, inputValidators, outputValidators, selection, authorize })` returns `{ publicDocument, dispatch }`. Supply the authoritative OpenRPC document, generated `webPolicy` from that document, and the same complete handler/validator maps as `createDispatcher`. A policy/catalog mismatch fails at construction; it cannot widen the reviewed maximum. `publicDocument` is the maximum web-eligible OpenRPC view (not current availability); its method set is limited to fully routable methods. `selection(trustedContext)` supplies a trusted per-installation name-to-`asApp`/`asUser` map. If absent, nothing is selected. A name is exposed only when it is web-eligible, routable, selected, and its selected mode matches the reviewed mode. Selection may change between calls. `authorize(method, mode, trustedContext)` is app-owned and defaults to deny; it does not select a different execution mode. For `asUser`, supply `canActAsUser(trustedContext)` to check that Forge can act as the Jira-verified account in trusted context (for example, by checking the app's user impersonation capability for that account). Only an explicit `true` permits execution; absent, false, or throwing checks return `-32001 Not permitted` without falling back to `asApp`. `asApp` does not require a user-context check. The app must bind both this check and the handler's user capability to the same verified account ID; neither may use an ID from params. Authentication as an admin does not override the reviewed mode or app-owned policy.
 
 `dispatch` expects authentication to have already completed. `rpc.discover` accepts empty named params and returns an OpenRPC view of the current selected methods; discovery is not an authorization grant. Unknown and unexposed methods both return `-32601 Method not found`; exposed methods denied by `authorize` return `-32001 Not permitted`. Both views omit internal methods, private extension metadata, and unreferenced component schemas. Do not use this in-memory API as a webtrigger on its own: it provides no authentication, Forge user capability implementation, HTTP ingress, or audit publishing. These are separate integration prerequisites.
+
+## CloudEvents audit for web ingress
+
+`createWebtrigger` accepts an optional `audit` port with `source` (stable
+CloudEvents source URI), `identity(trustedInstallation)` returning
+`{ installationId, environment }`, optional `accountId(verifiedPrincipal)`,
+`publish(event): Promise<void>`, `onFailure(phase)`, and a positive finite
+`timeoutMs`. A reviewed `critical` web method requires this port at adapter
+construction. The app must provide a publisher whose resolved promise means
+acknowledged delivery; a Forge log line is not an acknowledgement or durable
+retention. This library does not implement persistence, retries, or sampling.
+
+Events use CloudEvents 1.0 fields `specversion`, generated UUID `id`,
+`source`, `type`, `time`, and `data`. The stable types are
+`com.forge-ahead.rpc.authentication`, `.authorization`, `.attempt`, and
+`.outcome`. Each request has a generated `data.correlationId`; data includes
+trusted installation/environment, verified account ID when configured, a
+reviewed method name where applicable, and a safe `reason` category:
+`authenticated`, `invalid-credentials`, `not-admin`, `unavailable`,
+`allowed`, `denied`, `unknown`, `started`, `succeeded`, or `failed`.
+Raw requests, credentials, email, params, headers, unverified claims, and
+exception details are not copied to events or the operator callback. The
+app's identity and account-ID extractors must return only trusted, safe IDs.
+
+Authentication and authorization decisions are published best-effort;
+a publication failure calls `onFailure` without changing the 401/403/503
+or denial. Critical attempts must receive acknowledgement before the handler
+starts; publication rejection or timeout returns a sanitized JSON-RPC internal
+error without executing it, even if delivery may have occurred. An outcome
+publication failure calls `onFailure` but does not turn a successful write
+into a retryable error. No rollback, automatic retry, audit completeness,
+or durable retention is claimed. In-memory dispatcher tests can run without
+a publisher; this does not verify deployed audit security.
 
 ## Forge dynamic webtrigger adapter
 
