@@ -14,6 +14,7 @@ const handlers = {
         ? err("not available")
         : ok({ message: `${context.prefix}, ${name}!` }),
     ),
+  "greeting.ping": async () => ok(true),
 } satisfies HandlerMap<{ prefix: string }, string>;
 
 const dispatch = createDispatcher({
@@ -38,6 +39,15 @@ test("OpenRPC-derived handler dispatches a correlated result with trusted contex
     id: 7,
     result: { message: "Hello, Ada!" },
   });
+});
+
+test("empty named params dispatch the second generated method", async () => {
+  expect(
+    await dispatch(
+      { jsonrpc: "2.0", method: "greeting.ping", params: {}, id: "ping" },
+      { prefix: "unused" },
+    ),
+  ).toEqual({ jsonrpc: "2.0", id: "ping", result: true });
 });
 
 test("invalid params fail safely without executing a handler", async () => {

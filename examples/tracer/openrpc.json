@@ -9,5 +9,10 @@
       "type": "object", "properties": { "message": { "type": "string" } },
       "required": ["message"], "additionalProperties": false
     } }
+  }, {
+    "name": "greeting.ping",
+    "paramStructure": "by-name",
+    "params": [],
+    "result": { "name": "pong", "schema": { "type": "boolean" } }
   }]
 }
