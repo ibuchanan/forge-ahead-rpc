@@ -46,6 +46,12 @@ only; they do not provide idempotency or replay protection.
 
 `dispatch` expects authentication to have already completed. `rpc.discover` accepts empty named params and returns an OpenRPC view of the current selected methods; discovery is not an authorization grant. Unknown and unexposed methods both return `-32601 Method not found`; exposed methods denied by `authorize` return `-32001 Not permitted`. Both views omit internal methods, private extension metadata, and unreferenced component schemas. Do not use this in-memory API as a webtrigger on its own: it provides no authentication, Forge user capability implementation, HTTP ingress, or audit publishing. These are separate integration prerequisites.
 
+## Development test profile
+
+`createTestProfileSelection(webPolicy, buildTarget, productionSelection)` returns a trusted selection callback for `createWebDispatcher` or `createWebtrigger`. Pass the generated `webPolicy` and a build-target constant, **not** a request or installation field. In a development build, `"development"` selects all reviewed web-eligible methods using their declared execution modes; internal-only methods remain unavailable over HTTP. In a production build, the compile-time gate disables this shortcut even if the runtime build target says `"development"`, and only the app-owned `productionSelection(trustedContext)` applies. Neither profile bypasses `authorize`, `canActAsUser`, or audit requirements.
+
+The default `bun run build` creates a production bundle with the gate compiled off. `bun run build:development` creates a separate `dist-development/` bundle with the gate compiled on. Install the latter **only in a separate Forge development installation**; never deploy it as a production artifact. Keep the production bundle and installation distinct from the development test profile. `bun run test:profiles` builds both and verifies their exposure differs. In-memory `createDispatcher` tests should supply an explicit trusted test principal and exercise every catalog method, including internal-only ones; they do not establish deployed authentication or authorization. A development webtrigger must still use a current Jira-admin authenticator on every request, including discovery, and retain app-owned policy and Forge execution-context checks. No deployment or real Jira verification is claimed by these local tests.
+
 ## CloudEvents audit for web ingress
 
 `createWebtrigger` accepts an optional `audit` port with `source` (stable

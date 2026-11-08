@@ -82,6 +82,27 @@ export type WebOptions<Context> = Options<Context> & {
   canActAsUser?: (context: Context) => boolean | Promise<boolean>;
 };
 
+declare const __RPC_DEV_PROFILE__: boolean;
+
+/** Select all reviewed web methods only in a development build; never derive buildTarget from runtime installation settings. */
+export function createTestProfileSelection<Context>(
+  webPolicy: WebOptions<Context>["webPolicy"],
+  buildTarget: "development" | "production",
+  productionSelection: (context: Context) => Record<string, Mode>,
+): (context: Context) => Record<string, Mode> {
+  return buildTarget === "development" &&
+    typeof __RPC_DEV_PROFILE__ !== "undefined" &&
+    __RPC_DEV_PROFILE__
+    ? () =>
+        Object.fromEntries(
+          Object.entries(webPolicy).map(([name, policy]) => [
+            name,
+            policy.execution,
+          ]),
+        )
+    : productionSelection;
+}
+
 export type DispatchAudit = {
   emit: (
     phase: AuditPhase,

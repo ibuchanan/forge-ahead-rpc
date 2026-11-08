@@ -35,6 +35,8 @@
   ],
   "scripts": {
     "build": "sh scripts/build.sh",
+    "build:development": "tsdown --config tsdown.development.config.json --no-dts",
+    "test:profiles": "bun run build && bun run build:development && RPC_CHECK_BUILDS=1 bun test tests/development-profile.test.ts",
     "changelog": "git cliff --config cliff.toml --unreleased -o CHANGELOG.md",
     "check": "run-p --npm-path npm --print-label \"{lint,test,size:check,pack:check}\"",
     "clean": "rm -rf node_modules package-lock.json dist",
