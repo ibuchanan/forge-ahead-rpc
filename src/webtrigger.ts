@@ -5,6 +5,7 @@ export type WebtriggerRequest = {
   method: string;
   headers?: Record<string, string[]>;
   body?: string;
+  queryParameters?: Record<string, string[]>;
 };
 export type WebtriggerResponse = {
   statusCode: number;
@@ -26,6 +27,89 @@ export type WebtriggerOptions<Context, ForgeContext, Installation, Principal> =
     /** Construct handler context only from independently verified values. */
     context: (installation: Installation, principal: Principal) => Context;
   };
+
+/** Internal-use Jira admin verifier. The caller provides a Jira HTTP port; do not use for distributable apps. */
+export function createJiraAdminAuthenticator(
+  requestJira: (
+    url: string,
+    authorization: string,
+  ) => Promise<{ status: number; body: unknown }>,
+) {
+  return async (
+    authorization: string,
+    installation: { jiraSiteUrl: string },
+  ) => {
+    if (!/^Basic [A-Za-z0-9+/]+={0,2}$/.test(authorization))
+      return { kind: "unauthorized" as const };
+    const decoded = Buffer.from(authorization.slice(6), "base64");
+    if (decoded.toString("base64") !== authorization.slice(6))
+      return { kind: "unauthorized" as const };
+    const credentials = decoded.toString("utf8");
+    const separator = credentials.indexOf(":");
+    if (
+      Buffer.from(credentials, "utf8").compare(decoded) !== 0 ||
+      separator < 1 ||
+      separator === credentials.length - 1 ||
+      !/^[^\s:@]+@[^\s:@]+\.[^\s:@]+$/.test(credentials.slice(0, separator)) ||
+      /[\r\n]/.test(credentials)
+    )
+      return { kind: "unauthorized" as const };
+    try {
+      const site = new URL(installation.jiraSiteUrl);
+      if (
+        site.protocol !== "https:" ||
+        !site.hostname ||
+        site.username ||
+        site.password ||
+        site.port ||
+        site.pathname !== "/" ||
+        site.search ||
+        site.hash
+      )
+        return { kind: "unavailable" as const };
+      const myself = await requestJira(
+        `${site.origin}/rest/api/3/myself`,
+        authorization,
+      );
+      if (myself.status === 401 || myself.status === 403)
+        return { kind: "unauthorized" as const };
+      if (myself.status !== 200) return { kind: "unavailable" as const };
+      const accountId = (myself.body as { accountId?: unknown } | null)
+        ?.accountId;
+      if (typeof accountId !== "string" || !accountId)
+        return { kind: "unavailable" as const };
+      const permissions = await requestJira(
+        `${site.origin}/rest/api/3/mypermissions?permissions=ADMINISTER`,
+        authorization,
+      );
+      if (permissions.status === 401 || permissions.status === 403)
+        return { kind: "unauthorized" as const };
+      if (permissions.status !== 200) return { kind: "unavailable" as const };
+      const admin = (
+        permissions.body as {
+          permissions?: { ADMINISTER?: { havePermission?: unknown } };
+        } | null
+      )?.permissions?.ADMINISTER?.havePermission;
+      if (admin !== true && admin !== false)
+        return { kind: "unavailable" as const };
+      return admin
+        ? { kind: "authenticated" as const, principal: { accountId } }
+        : { kind: "forbidden" as const };
+    } catch {
+      return { kind: "unavailable" as const };
+    }
+  };
+}
+
+const containsCredentials = (value: unknown): boolean => {
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(
+    ([key, item]) =>
+      /^(?:authorization|password|api[-_]?token|token|secret|credentials|api[-_]?key)$/i.test(
+        key,
+      ) || containsCredentials(item),
+  );
+};
 
 const json = (statusCode: number, value: unknown): WebtriggerResponse => ({
   statusCode,
@@ -80,6 +164,25 @@ export function createWebtrigger<
       return failure(415);
     if (typeof request.body !== "string") return failure(400);
     if (Buffer.byteLength(request.body, "utf8") > 65_536) return failure(413);
+    if (request.queryParameters && Object.keys(request.queryParameters).length)
+      return failure(400);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(request.body);
+    } catch {
+      // Preserve the dispatcher's JSON-RPC parse error after authentication.
+    }
+    try {
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        "params" in parsed &&
+        containsCredentials(parsed.params)
+      )
+        return failure(400);
+    } catch {
+      return failure(400);
+    }
     if (!authorizations[0]) return failure(401);
     if (!options.installation || !options.authenticate || !options.selection)
       return failure(503);

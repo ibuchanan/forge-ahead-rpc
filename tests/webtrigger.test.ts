@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { ok } from "@forge-ahead/errors";
-import { createWebtrigger } from "../src/webtrigger";
+import {
+  createJiraAdminAuthenticator,
+  createWebtrigger,
+} from "../src/webtrigger";
 
 const body = (method = "write.one", params: unknown = {}) =>
   JSON.stringify({ jsonrpc: "2.0", id: 7, method, params });
@@ -56,6 +59,188 @@ const options = {
   ) => ({ installation, principal }),
 };
 const forgeContext = { installation: { id: "trusted" } };
+
+test("Jira admin authentication uses trusted site and current Jira account on every call", async () => {
+  calls.length = 0;
+  const requests: string[] = [];
+  const authenticate = createJiraAdminAuthenticator(
+    async (url, authorization) => {
+      requests.push(url);
+      expect(authorization).toBe(
+        `Basic ${Buffer.from("claim@example.test:api-token").toString("base64")}`,
+      );
+      if (url.endsWith("/myself"))
+        return { status: 200, body: { accountId: "jira-verified" } };
+      return {
+        status: 200,
+        body: { permissions: { ADMINISTER: { havePermission: true } } },
+      };
+    },
+  );
+  const handle = createWebtrigger({
+    ...options,
+    installation: (context: { installation: { jiraSiteUrl: string } }) =>
+      context.installation,
+    authenticate,
+    context: (
+      _installation: { jiraSiteUrl: string },
+      principal: { accountId: string },
+    ) => ({ principal }),
+  });
+  const forgeContext = {
+    installation: { jiraSiteUrl: "https://trusted.atlassian.net" },
+  };
+  const input = request({
+    headers: {
+      "Content-Type": ["application/json"],
+      Authorization: [
+        `Basic ${Buffer.from("claim@example.test:api-token").toString("base64")}`,
+      ],
+    },
+    body: body("write.one", {
+      site: "https://attacker.test",
+      accountId: "fake",
+    }),
+  });
+  for (const method of ["write.one", "rpc.discover"]) {
+    const response = await handle(
+      {
+        ...input,
+        body: body(method, {
+          site: "https://attacker.test",
+          accountId: "fake",
+        }),
+      },
+      forgeContext,
+    );
+    expect(response.statusCode).toBe(200);
+  }
+  expect(requests).toEqual([
+    "https://trusted.atlassian.net/rest/api/3/myself",
+    "https://trusted.atlassian.net/rest/api/3/mypermissions?permissions=ADMINISTER",
+    "https://trusted.atlassian.net/rest/api/3/myself",
+    "https://trusted.atlassian.net/rest/api/3/mypermissions?permissions=ADMINISTER",
+  ]);
+  expect(calls).toEqual(["jira-verified"]);
+});
+
+test("Jira admin verifier distinguishes bad credentials, non-admin, and unavailable Jira", async () => {
+  calls.length = 0;
+  const basic = `Basic ${Buffer.from("claim@example.test:api-token").toString("base64")}`;
+  const input = request({
+    headers: { "Content-Type": ["application/json"], Authorization: [basic] },
+  });
+  const installation = { jiraSiteUrl: "https://trusted.atlassian.net" };
+  const invoke = async (
+    authorization: string,
+    jira: (url: string) => Promise<{ status: number; body: unknown }>,
+  ) =>
+    createWebtrigger({
+      ...options,
+      installation: (context: { installation: typeof installation }) =>
+        context.installation,
+      authenticate: createJiraAdminAuthenticator(jira),
+      context: (
+        _installation: typeof installation,
+        principal: { accountId: string },
+      ) => ({ principal }),
+    })(
+      {
+        ...input,
+        headers: { ...input.headers, Authorization: [authorization] },
+        body: body("rpc.discover"),
+      },
+      { installation },
+    );
+  const admin = {
+    status: 200,
+    body: { permissions: { ADMINISTER: { havePermission: true } } },
+  };
+  const identity = { status: 200, body: { accountId: "verified" } };
+  for (const malformed of [
+    "Bearer token",
+    "Basic ???",
+    "Basic Zm9v",
+    `Basic ${Buffer.from("not-email:token").toString("base64")}`,
+  ]) {
+    let called = false;
+    const result = await invoke(malformed, async () => {
+      called = true;
+      return identity;
+    });
+    expect(result.statusCode).toBe(401);
+    expect(called).toBe(false);
+  }
+  for (const [jira, status] of [
+    [
+      async (url: string) =>
+        url.endsWith("/myself")
+          ? { status: 401, body: { emailAddress: "secret" } }
+          : admin,
+      401,
+    ],
+    [
+      async (url: string) =>
+        url.endsWith("/myself")
+          ? identity
+          : {
+              status: 200,
+              body: { permissions: { ADMINISTER: { havePermission: false } } },
+            },
+      403,
+    ],
+    [
+      async (url: string) =>
+        url.endsWith("/myself") ? identity : { status: 401, body: {} },
+      401,
+    ],
+    [
+      async () => {
+        throw new Error("secret outage");
+      },
+      503,
+    ],
+    [
+      async (url: string) =>
+        url.endsWith("/myself") ? identity : { status: 200, body: {} },
+      503,
+    ],
+  ] as const) {
+    const response = await invoke(basic, jira);
+    expect(response.statusCode).toBe(status);
+    expect(response.body).toBe('{"error":"Request rejected"}');
+  }
+  expect(calls).toEqual([]);
+});
+
+test("credential-bearing query or params are rejected before authentication and dispatch", async () => {
+  calls.length = 0;
+  let verified = 0;
+  const handle = createWebtrigger({
+    ...options,
+    authenticate: async () => {
+      verified++;
+      return {
+        kind: "authenticated" as const,
+        principal: { accountId: "verified" },
+      };
+    },
+  });
+  for (const input of [
+    request({ queryParameters: { token: ["secret"] } }),
+    request({ queryParameters: { site: ["https://attacker.test"] } }),
+    request({ body: body("write.one", { apiToken: "secret" }) }),
+    request({
+      body: body("rpc.discover", { credentials: { password: "secret" } }),
+    }),
+  ]) {
+    const response = await handle(input, forgeContext);
+    expect(response.statusCode).toBe(400);
+    expect(response.body).not.toContain("secret");
+  }
+  expect(verified).toBe(0);
+  expect(calls).toEqual([]);
+});
 
 test("authenticated POST returns a Forge JSON response with trusted context", async () => {
   calls.length = 0;

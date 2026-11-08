@@ -1,7 +1,7 @@
 # In-memory command and JSON-RPC reference
 
 <!-- markdownlint-disable MD013 -->
-<!-- cspell:words webtrigger -->
+<!-- cspell:words mypermissions webtrigger -->
 
 `createExecutor(options)` returns `execute(method, params, trustedContext)`,
 a promise of `@forge-ahead/errors` `Result`. The caller supplies trusted
@@ -56,9 +56,30 @@ Import `createWebtrigger` from `forge-ahead-rpc/webtrigger` (the opt-in
 `{ kind: "forbidden" }`, or `{ kind: "unavailable" }`), and
 `context(installation, principal)` (the trusted handler context). Supply
 `selection` explicitly; no selection or missing configuration fails closed.
-The adapter does **not** implement authentication or provide Forge user
-impersonation: the app must verify credentials and installation binding. A
-webtrigger URL is not an authentication mechanism. Forge's dynamic webtrigger
+For **internal-use installations only**, `createJiraAdminAuthenticator(requestJira)`
+provides the replaceable Jira-admin authenticator. `requestJira(url,
+authorization)` is an app-supplied HTTPS Jira transport returning `{ status,
+body }`; it must send the Authorization header only to the supplied URL and
+must not log or retain it. The trusted installation supplies `jiraSiteUrl`
+(an HTTPS site origin), not a request field. On **every** request (including
+`rpc.discover`) it calls `/rest/api/3/myself` to verify Basic email/API-token
+credentials and obtain Jira's account ID, then calls
+`/rest/api/3/mypermissions?permissions=ADMINISTER` using the same credentials.
+Only a positive `havePermission: true` permits dispatch; the principal contains
+only Jira's verified `accountId`. The app's context factory must pass only that
+account ID and trusted installation identity to handlers, not credentials,
+email, or raw Jira responses. There is no identity or permission cache.
+Malformed Basic and rejected credentials yield generic 401; confirmed
+`havePermission: false` yields 403; malformed Jira responses, outages, and
+missing trusted site yield sanitized 503. Query parameters and credential-named
+fields in JSON-RPC params are rejected with HTTP 400 before authentication.
+The app must use HTTPS and configure Forge egress for its trusted Jira site.
+Customer-distributed apps and integrations admitting non-admin SaaS callers
+must supply and security-review an alternative authenticator; this library
+does not issue, store, or rotate credentials.
+The adapter does not provide Forge user impersonation: the app must supply
+and configure its authenticator, Jira transport, and trusted installation
+binding. A webtrigger URL is not an authentication mechanism. Forge's dynamic webtrigger
 must pass its request and invocation context to the returned handler; no
 manifest or deployment is generated here.
 
@@ -66,9 +87,10 @@ Ingress checks run in this order: POST only (405), well-formed array-valued
 headers and no duplicate `Content-Type` or `Authorization` values even across
 header casing (400), `application/json` optionally followed by
 `; charset=utf-8` (415), string body (400), at most 65,536 UTF-8 body bytes
-(413), nonempty authorization header (401), trusted configuration and
-installation (503), then authentication (401 invalid, 403 denied, 503
-unavailable or exception). A successful authentication is required before
+(413), no query parameters or credential-named JSON-RPC params (400),
+nonempty authorization header (401), trusted configuration and installation
+(503), then authentication (401 invalid, 403 denied, 503 unavailable or
+exception). A successful authentication is required before
 `rpc.discover` or any RPC call. HTTP rejections return
 `Content-Type: application/json; charset=utf-8` and a generic JSON
 `{"error":"Request rejected"}` body, never a JSON-RPC response or raw
