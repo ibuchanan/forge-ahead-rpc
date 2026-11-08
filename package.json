@@ -1,0 +1,65 @@
+{
+  "name": "forge-ahead-rpc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "",
+  "license": "Apache-2.0",
+  "author": "ibuchanan",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "main": "dist/index.cjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "sh scripts/build.sh",
+    "changelog": "git cliff --config cliff.toml --unreleased -o CHANGELOG.md",
+    "check": "run-p --npm-path npm --print-label \"{lint,test,size:check,pack:check}\"",
+    "clean": "rm -rf node_modules package-lock.json dist",
+    "format": "biome format --write",
+    "format:check": "biome format",
+    "lint": "run-p --npm-path npm --print-label \"lint:check:*\"",
+    "lint:check:biome": "biome lint",
+    "lint:check:fallow": "FALLOW_TELEMETRY=off fallow --summary",
+    "lint:check:format": "npm run format:check",
+    "lint:check:typecheck": "npm run typecheck",
+    "lint:docs": "markdownlint-cli2 \"**/*.md\" && cspell lint \"**/*.md\"",
+    "lint:fix": "biome lint --write",
+    "pack:check": "npm run build && sh scripts/pack-check.sh",
+    "prepare": "npm run build && (lefthook install || true)",
+    "release": "bash scripts/release.sh",
+    "release:check": "npm run test && npm run typecheck && npm run pack:check",
+    "test": "bun test --pass-with-no-tests",
+    "test:coverage": "bun test --coverage --pass-with-no-tests",
+    "test:watch": "bun test --watch --pass-with-no-tests",
+    "todo": "git grep -n -I -F TO\"DO\" -- .; status=$?; if [ \"$status\" -eq 1 ]; then echo \"No TO\"\"DO markers found.\"; elif [ \"$status\" -ne 0 ]; then exit \"$status\"; fi",
+    "typecheck": "tsc --project tsconfig.typecheck.json --noEmit"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.5",
+    "@biomejs/biome": "2.6.2",
+    "@types/bun": "1.4.2",
+    "@types/node": "22",
+    "cspell": "10.4.0",
+    "fallow": "3.34.1",
+    "git-cliff": "2.14.2",
+    "lefthook": "2.2.2",
+    "markdownlint-cli2": "0.24.0",
+    "npm-run-all2": "9.0.3",
+    "publint": "0.3.25",
+    "tsdown": "0.23.1",
+    "typescript": "5.9.3"
+  }
+}

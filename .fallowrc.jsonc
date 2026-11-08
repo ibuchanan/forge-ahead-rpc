@@ -1,0 +1,7 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignoreDependencies": [
+    // The changelog script calls `git cliff`, which Fallow does not associate with git-cliff.
+    "git-cliff"
+  ]
+}
