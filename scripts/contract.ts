@@ -275,6 +275,11 @@ export function generateContract(document: unknown, source: string) {
     contract,
     validators,
     declarations,
-    policy: `${heading}export const webPolicy = ${JSON.stringify(policy, null, 2)} as const;\n`,
+    policy: `${heading}export const webPolicy = {${Object.entries(policy)
+      .map(
+        ([name, value]) =>
+          `\n  ${JSON.stringify(name)}: {\n    execution: ${JSON.stringify(value.execution)},\n    audit: ${JSON.stringify(value.audit)},\n  },`,
+      )
+      .join("")}${Object.keys(policy).length ? "\n" : ""}} as const;\n`,
   };
 }
