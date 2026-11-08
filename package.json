@@ -52,6 +52,7 @@
     "@biomejs/biome": "2.6.2",
     "@types/bun": "1.4.2",
     "@types/node": "22",
+    "ajv": "^8.17",
     "cspell": "10.4.0",
     "fallow": "3.34.1",
     "git-cliff": "2.14.2",
@@ -61,5 +62,8 @@
     "publint": "0.3.25",
     "tsdown": "0.23.1",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "neverthrow": "^8.2"
   }
 }
