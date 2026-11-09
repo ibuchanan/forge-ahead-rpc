@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const fixture = "examples/tracer";

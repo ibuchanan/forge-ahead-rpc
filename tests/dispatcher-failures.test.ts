@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
-import { err, ok } from "@forge-ahead/errors";
-import { createDispatcher } from "../src/index";
+import { createProblemCatalog, err, ok } from "@forge-ahead/errors";
+import {
+  createDispatcher,
+  createExecutor,
+  rpcErrorCatalog,
+} from "../src/index";
 
 const writes: string[] = [];
 const dispatch = createDispatcher({
@@ -186,6 +190,88 @@ test("rejects application mappings that collide with protocol errors or contain 
         errorMap: { bad: { code, message: "Bad" } },
       }),
     ).toThrow();
+});
+
+test("default catalog and app-owned catalog project safe JSON-RPC errors", async () => {
+  expect(rpcErrorCatalog.get("invalid-params")?.code).toBe(-32602);
+  const catalog = createProblemCatalog("urn:example:rpc", {
+    "invalid-params": { title: "Bad arguments", code: -32602 },
+    "not-configured": { title: "Not configured", code: -32002 },
+  });
+  const options = {
+    handlers: {
+      preview: async ({ text }: { text: string }) =>
+        err(text === "missing" ? "not-configured" : "private detail"),
+    },
+    inputValidators: {
+      preview: (value: unknown) =>
+        !!value &&
+        typeof value === "object" &&
+        typeof (value as { text?: unknown }).text === "string",
+    },
+    outputValidators: { preview: () => true },
+    errorCatalog: catalog,
+  };
+  const execute = createExecutor<object, "not-configured">(options);
+  expect(
+    (await execute("preview", { text: "missing" }, {}))._unsafeUnwrapErr(),
+  ).toBe("not-configured");
+  const app = createDispatcher(options);
+  const request = (text: unknown) => ({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "preview",
+    params: { text },
+  });
+  expect(await app(request("missing"), {})).toEqual(
+    failure(-32002, "Not configured", 8),
+  );
+  expect(await app(request("other"), {})).toEqual(
+    failure(-32000, "Command failed", 8),
+  );
+  expect(await app(request(2), {})).toEqual(
+    failure(-32602, "Bad arguments", 8),
+  );
+  expect(await app("{", {})).toEqual(failure(-32700, "Parse error"));
+});
+
+test("handlers cannot claim dispatcher-owned protocol failures", async () => {
+  const app = createDispatcher({
+    handlers: { preview: async ({ name }: { name: string }) => err(name) },
+    inputValidators: { preview: () => true },
+    outputValidators: { preview: () => true },
+  });
+  for (const name of ["parse-error", "invalid-request", "method-not-found"])
+    expect(
+      await app(
+        { jsonrpc: "2.0", id: 1, method: "preview", params: { name } },
+        {},
+      ),
+    ).toEqual(failure(-32000, "Command failed", 1));
+});
+
+test("rejects unsafe catalog overrides and fails closed on malformed app entries", async () => {
+  const base = {
+    handlers: { preview: async () => err("bad") },
+    inputValidators: { preview: () => true },
+    outputValidators: { preview: () => true },
+  };
+  for (const entry of [
+    { title: "Wrong code", code: -32002 },
+    { title: "secret\nvalue", code: -32602 },
+  ]) {
+    const errorCatalog = createProblemCatalog("urn:example:rpc", {
+      "invalid-params": entry,
+    });
+    expect(() => createDispatcher({ ...base, errorCatalog })).toThrow();
+  }
+  const errorCatalog = createProblemCatalog("urn:example:rpc", {
+    bad: { title: "Unsafe\nmessage", code: -32002 },
+  });
+  const app = createDispatcher({ ...base, errorCatalog });
+  expect(
+    await app({ jsonrpc: "2.0", id: 9, method: "preview", params: {} }, {}),
+  ).toEqual(failure(-32000, "Command failed", 9));
 });
 
 test("invalid output after a write reports internal failure without repeating the write", async () => {

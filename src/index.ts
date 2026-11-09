@@ -1,12 +1,73 @@
-import { err, ok, type Result } from "@forge-ahead/errors";
+import {
+  createProblemCatalog,
+  err,
+  ok,
+  type ProblemCatalog,
+  type Result,
+} from "@forge-ahead/errors";
 import type { AuditPhase, AuditReason } from "./audit";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
+
+export const rpcErrorCatalog = createProblemCatalog("urn:forge-ahead:rpc", {
+  "parse-error": { title: "Parse error", code: -32700 },
+  "invalid-request": { title: "Invalid request", code: -32600 },
+  "method-not-found": { title: "Method not found", code: -32601 },
+  "invalid-params": { title: "Invalid params", code: -32602 },
+  "internal-error": { title: "Internal error", code: -32603 },
+  "command-failed": { title: "Command failed", code: -32000 },
+  forbidden: { title: "Forbidden", code: -32001 },
+});
+
+const builtins = [
+  "parse-error",
+  "invalid-request",
+  "method-not-found",
+  "invalid-params",
+  "internal-error",
+  "command-failed",
+  "forbidden",
+] as const;
+
+function publicError(
+  name: string,
+  catalog?: ProblemCatalog,
+): { code: number; message: string } | undefined {
+  const standard = rpcErrorCatalog.get(name);
+  const definition = catalog?.get(name) ?? standard;
+  if (!definition) return undefined;
+  const { code, title } = definition;
+  if (
+    typeof code !== "number" ||
+    !Number.isInteger(code) ||
+    typeof title !== "string" ||
+    !/^[\x20-\x7e]{1,120}$/.test(title) ||
+    (standard ? code !== standard.code : code < -32099 || code > -32002)
+  ) {
+    if (standard) throw new Error("invalid application error mapping");
+    return undefined;
+  }
+  return { code, message: title };
+}
 
 /** Execute one catalog command without JSON-RPC framing. */
 export function createExecutor<Context, Failure extends string = never>(
   options: Options<Context, Failure>,
 ) {
   validateErrorMap(options.errorMap);
+  for (const name of builtins) publicError(name, options.errorCatalog);
+  for (const [name, entry] of Object.entries(
+    (options.errorMap ?? {}) as Record<
+      string,
+      { code: number; message: string }
+    >,
+  )) {
+    const catalogEntry = options.errorCatalog?.get(name);
+    if (
+      catalogEntry &&
+      (catalogEntry.code !== entry.code || catalogEntry.title !== entry.message)
+    )
+      throw new Error("conflicting application error mapping");
+  }
   return async (
     method: string,
     params: unknown,
@@ -42,7 +103,13 @@ export function createExecutor<Context, Failure extends string = never>(
             result.error === "internal-error"
             ? result.error
             : typeof result.error === "string" &&
-                Object.hasOwn(options.errorMap ?? {}, result.error)
+                ![
+                  "parse-error",
+                  "invalid-request",
+                  "method-not-found",
+                ].includes(result.error) &&
+                (Object.hasOwn(options.errorMap ?? {}, result.error) ||
+                  publicError(result.error, options.errorCatalog))
               ? (result.error as Failure)
               : "command-failed",
         );
@@ -86,7 +153,9 @@ type Handler<Context> = (
 ) => Promise<Result<unknown, unknown>>;
 type Options<Context, Failure extends string = never> = {
   handlers: Record<string, Handler<Context>>;
-  /** Only explicitly mapped application failures are exposed to callers. */
+  /** App-owned definitions can override built-in titles (not codes) and register failures. */
+  errorCatalog?: ProblemCatalog;
+  /** Legacy per-name mapping; prefer errorCatalog for new integrations. */
   errorMap?: Record<Failure, { code: number; message: string }>;
   inputValidators: Record<string, Validator>;
   outputValidators: Record<string, Validator>;
@@ -266,7 +335,10 @@ export function createDispatcher<Context, Failure extends string = never>(
         return {
           jsonrpc: "2.0",
           id: null,
-          error: { code: -32700, message: "Parse error" },
+          error: publicError("parse-error", options.errorCatalog) ?? {
+            code: -32700,
+            message: "Parse error",
+          },
         };
       }
     }
@@ -279,11 +351,20 @@ export function createDispatcher<Context, Failure extends string = never>(
       (typeof value?.["id"] === "number" && Number.isFinite(value["id"]))
         ? (value["id"] as string | number)
         : null;
-    const error = (code: number, message: string): Response => ({
-      jsonrpc: "2.0",
-      id,
-      error: { code, message },
-    });
+    const error = (name: string, message?: string): Response => {
+      const definition = (Object.hasOwn(options.errorMap ?? {}, name)
+        ? options.errorMap?.[name as Failure]
+        : undefined) ??
+        publicError(name, options.errorCatalog) ?? {
+          code: -32000,
+          message: "Command failed",
+        };
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: message ? { ...definition, message } : definition,
+      };
+    };
     if (
       !value ||
       Object.keys(value).some(
@@ -297,7 +378,7 @@ export function createDispatcher<Context, Failure extends string = never>(
       typeof value["params"] !== "object" ||
       Array.isArray(value["params"])
     ) {
-      return error(-32600, "Invalid request");
+      return error("invalid-request");
     }
     if (options.web) {
       let gate: Awaited<
@@ -306,18 +387,18 @@ export function createDispatcher<Context, Failure extends string = never>(
       try {
         gate = await options.web(value["method"], context, audit);
       } catch {
-        return error(-32603, "Internal error");
+        return error("internal-error");
       }
-      if (gate?.kind === "unknown") return error(-32601, "Method not found");
-      if (gate?.kind === "denied") return error(-32001, "Not permitted");
+      if (gate?.kind === "unknown") return error("method-not-found");
+      if (gate?.kind === "denied") return error("forbidden", "Not permitted");
       if (gate?.kind === "discovery")
         return Object.keys(value["params"] as object).length === 0
           ? { jsonrpc: "2.0", id, result: gate.document }
-          : error(-32602, "Invalid params");
+          : error("invalid-params");
     }
     if (options.critical?.(value["method"])) {
       if (!audit || !(await audit.emit("attempt", "started", value["method"])))
-        return error(-32603, "Internal error");
+        return error("internal-error");
     }
     const outcome = await execute(value["method"], value["params"], context);
     await audit?.emit(
@@ -326,26 +407,8 @@ export function createDispatcher<Context, Failure extends string = never>(
       value["method"],
     );
     if (outcome.isOk()) return { jsonrpc: "2.0", id, result: outcome.value };
-    if (
-      typeof outcome.error === "string" &&
-      Object.hasOwn(options.errorMap ?? {}, outcome.error)
-    ) {
-      const mapped = options.errorMap?.[outcome.error as Failure];
-      if (mapped) return error(mapped.code, mapped.message);
-    }
-    switch (outcome.error) {
-      case "method-not-found":
-        return error(-32601, "Method not found");
-      case "invalid-params":
-        return error(-32602, "Invalid params");
-      case "forbidden":
-        return error(-32001, "Forbidden");
-      case "command-failed":
-        return error(-32000, "Command failed");
-      case "internal-error":
-        return error(-32603, "Internal error");
-      default:
-        return error(-32603, "Internal error");
-    }
+    return error(
+      typeof outcome.error === "string" ? outcome.error : "internal-error",
+    );
   };
 }

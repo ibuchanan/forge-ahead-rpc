@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
 import { generateContract } from "forge-ahead-rpc/generator";
 
 const require = createRequire(import.meta.url);
