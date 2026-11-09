@@ -283,7 +283,9 @@ for the v1 event policy and its replaceable publishing seam.
   JSON-RPC framing. Reuse trigger helpers only if tests demonstrate compatible
   behavior; the peer's direct substitution was **deferred** because defaults
   changed its response shape and parse-error handling. No dependency cycle or
-  gratuitous wrapper is required for the sake of an import.
+  gratuitous wrapper is required for the sake of an import. See
+  [ADR 0001](../docs/adr/0001-keep-json-rpc-webtrigger-transport-local.md)
+  for the current decision against a direct dependency.
 
 ### Audit event seam
 
