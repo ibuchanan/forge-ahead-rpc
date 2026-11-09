@@ -1,32 +1,39 @@
 import Ajv from "ajv";
 import standaloneCode from "ajv/dist/standalone/index.js";
 import { methodMetadata } from "./exposure";
-import { schemaKeywords } from "./openrpc";
-
+import {
+  emitSchemaType,
+  fail,
+  list,
+  object,
+  validateSchema,
+} from "./generator-schema";
+import {
+  contractTemplate,
+  declarationsTemplate,
+  policyTemplate,
+  validatorsTemplate,
+} from "./generator-templates";
 type Obj = Record<string, unknown>;
-const schemaKeys = new Set<string>(schemaKeywords);
+type Policy = Record<
+  string,
+  { execution: "asApp" | "asUser"; audit: "standard" | "critical" }
+>;
 const methodName = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 const identifier = /^[A-Za-z_$][\w$]*$/;
-function fail(where: string, reason: string): never {
-  throw new Error(`${where}: ${reason}`);
-}
-function object(value: unknown, where: string): Obj {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Obj)
-    : fail(where, "expected object");
-}
-function list(value: unknown, where: string): unknown[] {
-  return Array.isArray(value)
-    ? (value as unknown[])
-    : fail(where, "expected array");
+
+function compileValidators(ajv: Ajv, exports: Record<string, string>): string {
+  // Ajv emits a CommonJS helper for UTF-16 code-point length even with esm: true.
+  const code = standaloneCode(ajv, exports).replaceAll(
+    'require("ajv/dist/runtime/ucs2length").default',
+    "(str => Array.from(str).length)",
+  );
+  if (code.includes("require("))
+    fail("validators", "unsupported Ajv runtime helper in ESM output");
+  return code;
 }
 
-/** Generate reviewable artifacts from the bounded OpenRPC 1.3.2 / JSON Schema draft-07 profile. */
-export function generateContract(document: unknown, source: string) {
-  const doc = object(document, "OpenRPC document");
-  if (doc["openrpc"] !== "1.3.2") fail("openrpc", "expected 1.3.2");
-  const methods = list(doc["methods"], "methods");
-  if (!methods.length) fail("methods", "expected nonempty array");
+function schemaReferences(doc: Obj): Map<string, Obj> {
   const components =
     doc["components"] === undefined
       ? {}
@@ -44,146 +51,74 @@ export function generateContract(document: unknown, source: string) {
       object(value, `components.schemas.${key}`),
     );
   }
-  const checkSchema = (
-    value: unknown,
-    where: string,
-    stack: string[] = [],
-  ): { ts: string; schema: Obj } => {
-    const schema = object(value, where);
-    for (const key of Object.keys(schema))
-      if (!schemaKeys.has(key)) fail(where, `unsupported keyword ${key}`);
-    if ("$ref" in schema) {
-      const ref = schema["$ref"];
-      if (Object.keys(schema).length !== 1)
-        fail(where, "$ref cannot have siblings");
-      if (typeof ref !== "string" || !refs.has(ref))
-        fail(where, `unresolved or external reference ${String(ref)}`);
-      if (stack.includes(ref)) fail(where, `circular reference ${ref}`);
-      return checkSchema(refs.get(ref), ref, [...stack, ref]);
-    }
-    const declared =
-      schema["type"] ??
-      ("const" in schema
-        ? schema["const"] === null
-          ? "null"
-          : typeof schema["const"]
-        : undefined);
-    const types: unknown[] = Array.isArray(declared) ? declared : [declared];
+  for (const [ref, schema] of refs) validateSchema(schema, ref, refs);
+  return refs;
+}
+
+function methodParams(method: Obj, where: string): Obj {
+  if (method["paramStructure"] !== "by-name")
+    fail(where, "by-name params required");
+  const params = list(method["params"], `${where}.params`);
+  const properties: Obj = {};
+  const required: string[] = [];
+  for (const item of params) {
+    const param = object(item, `${where}.params`);
+    const key = param["name"];
     if (
-      !types.length ||
-      new Set(types).size !== types.length ||
-      types.some(
-        (type) =>
-          !["object", "string", "boolean", "null"].includes(type as string),
-      )
+      typeof key !== "string" ||
+      !identifier.test(key) ||
+      ["__proto__", "constructor", "prototype"].includes(key) ||
+      Object.hasOwn(properties, key)
     )
-      fail(where, "unsupported type");
-    if (types.length > 2 || (types.length === 2 && !types.includes("null")))
-      fail(where, "only nullable unions are supported");
-    const kind =
-      (types.find((type) => type !== "null") as string | undefined) ?? "null";
-    const literal = schema["const"];
-    const values = schema["enum"];
-    if (types.length === 2 && ("const" in schema || values !== undefined))
-      fail(
-        where,
-        "nullable literals are unsupported; use a nullable primitive type",
-      );
+      fail(where, `invalid or duplicate parameter name ${String(key)}`);
     if (
-      "const" in schema &&
-      (!["string", "boolean", "null"].includes(kind) ||
-        (literal === null ? "null" : typeof literal) !== kind)
+      param["required"] !== undefined &&
+      typeof param["required"] !== "boolean"
     )
-      fail(where, "const does not match type");
-    if (
-      values !== undefined &&
-      (!Array.isArray(values) ||
-        !values.length ||
-        values.some(
-          (item: unknown) =>
-            !["string", "boolean"].includes(kind) || typeof item !== kind,
-        ))
-    )
-      fail(where, "enum must contain matching literals");
-    if ("const" in schema && values !== undefined)
-      fail(where, "const and enum cannot be combined");
-    if (kind !== "string" && ("minLength" in schema || "maxLength" in schema))
-      fail(where, "string limits require string type");
-    for (const key of ["minLength", "maxLength"])
-      if (
-        key in schema &&
-        (typeof schema[key] !== "number" ||
-          !Number.isSafeInteger(schema[key]) ||
-          (schema[key] as number) < 0)
-      )
-        fail(where, `${key} must be nonnegative integer`);
-    if (
-      typeof schema["minLength"] === "number" &&
-      typeof schema["maxLength"] === "number" &&
-      schema["minLength"] > schema["maxLength"]
-    )
-      fail(where, "minLength exceeds maxLength");
-    if (
-      kind !== "object" &&
-      ["properties", "required", "additionalProperties"].some(
-        (key) => key in schema,
-      )
-    )
-      fail(where, "object keywords require object type");
-    let ts: string;
-    let normalized: Obj = { ...schema };
-    if (kind === "object") {
-      if (
-        types.length !== 1 ||
-        "const" in schema ||
-        values !== undefined ||
-        schema["additionalProperties"] !== false
-      )
-        fail(
-          where,
-          "object requires additionalProperties: false and no unions or literals",
-        );
-      const properties = object(
-        schema["properties"] ?? {},
-        `${where}.properties`,
-      );
-      const required = list(schema["required"] ?? [], `${where}.required`);
-      if (
-        new Set(required).size !== required.length ||
-        required.some(
-          (key) => typeof key !== "string" || !Object.hasOwn(properties, key),
-        )
-      )
-        fail(where, "required must list unique declared properties");
-      const props: Obj = {};
-      ts =
-        Object.keys(properties).length === 0
-          ? "Record<string, never>"
-          : `{ ${Object.entries(properties)
-              .map(([key, item]) => {
-                const child = checkSchema(
-                  item,
-                  `${where}.properties.${key}`,
-                  stack,
-                );
-                props[key] = child.schema;
-                return `${JSON.stringify(key)}${required.includes(key) ? "" : "?"}: ${child.ts}`;
-              })
-              .join("; ")} }`;
-      normalized = { ...schema, properties: props };
-    } else {
-      ts =
-        "const" in schema
-          ? JSON.stringify(literal)
-          : Array.isArray(values)
-            ? values.map((item: unknown) => JSON.stringify(item)).join(" | ")
-            : kind;
-      if (types.length === 2) ts += " | null";
-      if (schema["type"] === undefined) normalized = { ...schema, type: kind };
-    }
-    return { ts, schema: normalized };
-  };
-  for (const [ref, schema] of refs) checkSchema(schema, ref);
+      fail(where, `invalid required flag for ${key}`);
+    properties[key] = param["schema"];
+    if (param["required"]) required.push(key);
+  }
+  return { type: "object", properties, required, additionalProperties: false };
+}
+
+function parseMethod(
+  value: unknown,
+  index: number,
+  refs: Map<string, Obj>,
+  names: Set<string>,
+  policy: Policy,
+) {
+  const where = `methods[${index}]`;
+  const method = object(value, where);
+  const metadata = methodMetadata(method);
+  const name = method["name"];
+  if (typeof name !== "string" || !methodName.test(name) || names.has(name))
+    fail(where, `invalid or duplicate method name ${String(name)}`);
+  if (name === "rpc.discover") fail(where, "reserved method name rpc.discover");
+  names.add(name);
+  if (metadata.web === true && metadata.execution && metadata.audit)
+    policy[name] = { execution: metadata.execution, audit: metadata.audit };
+  const input = validateSchema(
+    methodParams(method, where),
+    `${where}.params`,
+    refs,
+  );
+  const output = validateSchema(
+    object(method["result"], `${where}.result`)["schema"],
+    `${where}.result.schema`,
+    refs,
+  );
+  return { name, input, output };
+}
+
+/** Generate reviewable artifacts from the bounded OpenRPC 1.3.2 / JSON Schema draft-07 profile. */
+export function generateContract(document: unknown, source: string) {
+  const doc = object(document, "OpenRPC document");
+  if (doc["openrpc"] !== "1.3.2") fail("openrpc", "expected 1.3.2");
+  const methods = list(doc["methods"], "methods");
+  if (!methods.length) fail("methods", "expected nonempty array");
+  const refs = schemaReferences(doc);
   const ajv = new Ajv({
     code: { source: true, esm: true },
     strict: true,
@@ -193,84 +128,30 @@ export function generateContract(document: unknown, source: string) {
     removeAdditional: false,
   });
   const entries: string[] = [];
-  const policy: Record<
-    string,
-    { execution: "asApp" | "asUser"; audit: "standard" | "critical" }
-  > = {};
+  const policy: Policy = {};
   const exports: Record<string, string> = {};
   const names = new Set<string>();
   methods.forEach((value, index) => {
-    const where = `methods[${index}]`;
-    const method = object(value, where);
-    const metadata = methodMetadata(method);
-    const name = method["name"];
-    if (typeof name !== "string" || !methodName.test(name) || names.has(name))
-      fail(where, `invalid or duplicate method name ${String(name)}`);
-    if (name === "rpc.discover")
-      fail(where, "reserved method name rpc.discover");
-    names.add(name);
-    if (metadata.web === true && metadata.execution && metadata.audit)
-      policy[name] = { execution: metadata.execution, audit: metadata.audit };
-    if (method["paramStructure"] !== "by-name")
-      fail(where, "by-name params required");
-    const params = list(method["params"], `${where}.params`);
-    const properties: Obj = {};
-    const required: string[] = [];
-    for (const item of params) {
-      const param = object(item, `${where}.params`);
-      const key = param["name"];
-      if (
-        typeof key !== "string" ||
-        !identifier.test(key) ||
-        ["__proto__", "constructor", "prototype"].includes(key) ||
-        Object.hasOwn(properties, key)
-      )
-        fail(where, `invalid or duplicate parameter name ${String(key)}`);
-      if (
-        param["required"] !== undefined &&
-        typeof param["required"] !== "boolean"
-      )
-        fail(where, `invalid required flag for ${key}`);
-      properties[key] = param["schema"];
-      if (param["required"]) required.push(key);
-    }
-    const input = checkSchema(
-      { type: "object", properties, required, additionalProperties: false },
-      `${where}.params`,
+    const { name, input, output } = parseMethod(
+      value,
+      index,
+      refs,
+      names,
+      policy,
     );
-    const output = checkSchema(
-      object(method["result"], `${where}.result`)["schema"],
-      `${where}.result.schema`,
-    );
-    ajv.addSchema(input.schema, `rpc-input-${index}`);
-    ajv.addSchema(output.schema, `rpc-output-${index}`);
+    ajv.addSchema(input, `rpc-input-${index}`);
+    ajv.addSchema(output, `rpc-output-${index}`);
     exports[`input${index}`] = `rpc-input-${index}`;
     exports[`output${index}`] = `rpc-output-${index}`;
     entries.push(
-      `${JSON.stringify(name)}: { params: ${input.ts}; result: ${output.ts} };`,
+      `${JSON.stringify(name)}: { params: ${emitSchemaType(input)}; result: ${emitSchemaType(output)} };`,
     );
   });
-  const heading = `// Generated from ${source}; do not edit.\n`;
-  const contract = `${heading}import type { Result } from "@forge-ahead/errors";\n\nexport interface Commands {\n${entries.map((entry) => `  ${entry}`).join("\n")}\n}\nexport type HandlerMap<Context, Failure> = {\n  [M in keyof Commands]: (params: Commands[M]["params"], context: Context) => Promise<Result<Commands[M]["result"], Failure>>;\n};\nexport type Caller = <M extends keyof Commands>(method: M, params: Commands[M]["params"]) => Promise<Commands[M]["result"]>;\n`;
-  // Ajv emits a CommonJS helper for UTF-16 code-point length even with esm: true.
-  const code = standaloneCode(ajv, exports).replaceAll(
-    'require("ajv/dist/runtime/ucs2length").default',
-    "(str => Array.from(str).length)",
-  );
-  if (code.includes("require("))
-    fail("validators", "unsupported Ajv runtime helper in ESM output");
-  const keys = [...names];
-  const validators = `${heading}${code}\nexport const inputValidators = { ${keys.map((key, i) => `${JSON.stringify(key)}: input${i}`).join(", ")} };\nexport const outputValidators = { ${keys.map((key, i) => `${JSON.stringify(key)}: output${i}`).join(", ")} };\n`;
-  const declarations = `${heading}import type { Commands } from "./contract";\ntype Validate<T> = (value: unknown) => value is T;\nexport const inputValidators: { [M in keyof Commands]: Validate<Commands[M]["params"]> };\nexport const outputValidators: { [M in keyof Commands]: Validate<Commands[M]["result"]> };\n`;
+  const code = compileValidators(ajv, exports);
   return {
-    contract,
-    validators,
-    declarations,
-    policy: `${heading}export const webPolicy = {${Object.entries(policy)
-      .map(
-        ([name, value]) =>
-          `\n  ${JSON.stringify(name)}: {\n    execution: ${JSON.stringify(value.execution)},\n    audit: ${JSON.stringify(value.audit)},\n  },`,
-      )
-      .join("")}${Object.keys(policy).length ? "\n" : ""}} as const;\n`,
+    contract: contractTemplate(source, entries),
+    validators: validatorsTemplate(source, code, [...names]),
+    declarations: declarationsTemplate(source),
+    policy: policyTemplate(source, policy),
   };
 }
