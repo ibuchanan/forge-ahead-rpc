@@ -129,7 +129,7 @@ export function createWebtrigger<
   Installation,
   Principal,
 >(options: WebtriggerOptions<Context, ForgeContext, Installation, Principal>) {
-  const web = createWebDispatcher(options, true);
+  const web = createWebDispatcher(options, { requireAudit: true });
   if (
     Object.values(options.webPolicy).some(
       (policy) => policy.audit === "critical",
