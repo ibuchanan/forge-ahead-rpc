@@ -1,5 +1,7 @@
 import { type AuditPort, auditSession } from "./audit";
 import { createWebDispatcher, type WebOptions } from "./index";
+import { authenticationOutcome } from "./webtrigger-auth";
+import { validateWebtriggerRequest } from "./webtrigger-request";
 
 /** Forge dynamic webtrigger request shape (no Forge runtime dependency). */
 export type WebtriggerRequest = {
@@ -30,16 +32,6 @@ export type WebtriggerOptions<Context, ForgeContext, Installation, Principal> =
     /** App-provided acknowledged CloudEvents publisher; required for critical methods. */
     audit?: AuditPort<Installation, Principal>;
   };
-
-const containsCredentials = (value: unknown): boolean => {
-  if (!value || typeof value !== "object") return false;
-  return Object.entries(value).some(
-    ([key, item]) =>
-      /^(?:authorization|password|api[-_]?token|token|secret|credentials|api[-_]?key)$/i.test(
-        key,
-      ) || containsCredentials(item),
-  );
-};
 
 const json = (statusCode: number, value: unknown): WebtriggerResponse => ({
   statusCode,
@@ -74,127 +66,74 @@ export function createWebtrigger<
       options.audit.timeoutMs <= 0)
   )
     throw new Error("invalid audit configuration");
+  const authenticate = async (
+    authorization: string | undefined,
+    forgeContext: ForgeContext,
+  ) => {
+    // A missing header remains 401 even when trusted installation lookup fails.
+    let installation: Installation | undefined;
+    try {
+      installation = options.installation(forgeContext);
+    } catch {
+      if (authorization) return 503;
+      try {
+        options.audit?.onFailure("authentication");
+      } catch {
+        /* Preserve 401. */
+      }
+      return 401;
+    }
+    if (installation == null) return authorization ? 503 : 401;
+    let auth: Authentication<Principal> | { kind: "missing" };
+    if (!authorization) auth = { kind: "missing" };
+    else {
+      try {
+        auth = await options.authenticate(authorization, installation);
+      } catch {
+        auth = { kind: "unavailable" };
+      }
+    }
+    if (
+      auth.kind === "authenticated" &&
+      (!auth.principal || typeof auth.principal !== "object")
+    )
+      return 503;
+    const outcome = authenticationOutcome(auth.kind);
+    const principal =
+      auth.kind === "authenticated" ? auth.principal : undefined;
+    try {
+      if (options.audit)
+        await auditSession(options.audit, installation, principal).emit(
+          "authentication",
+          outcome.reason,
+        );
+    } catch {
+      // Authentication audit is best-effort; retain the decided HTTP status.
+    }
+    return auth.kind === "authenticated"
+      ? { installation, principal: auth.principal }
+      : outcome.status;
+  };
   return async (
     request: WebtriggerRequest,
     forgeContext?: ForgeContext,
   ): Promise<WebtriggerResponse> => {
     if (forgeContext === undefined || forgeContext === null)
       return failure(503);
-    if (request.method !== "POST") return failure(405);
-    if (
-      request.headers !== undefined &&
-      (!request.headers ||
-        typeof request.headers !== "object" ||
-        Array.isArray(request.headers))
-    )
-      return failure(400);
-    const headerEntries = Object.entries(request.headers ?? {});
-    if (
-      headerEntries.some(
-        ([, values]) =>
-          !Array.isArray(values) ||
-          values.some((value) => typeof value !== "string"),
-      )
-    )
-      return failure(400);
-    const headers = (name: string) =>
-      headerEntries
-        .filter(([key]) => key.toLowerCase() === name)
-        .flatMap(([, values]) => values);
-    const contentTypes = headers("content-type");
-    const authorizations = headers("authorization");
-    if (contentTypes.length > 1 || authorizations.length > 1)
-      return failure(400);
-    if (
-      !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
-        contentTypes[0] ?? "",
-      )
-    )
-      return failure(415);
-    if (typeof request.body !== "string") return failure(400);
-    if (Buffer.byteLength(request.body, "utf8") > 65_536) return failure(413);
-    if (request.queryParameters && Object.keys(request.queryParameters).length)
-      return failure(400);
-    let parsed: unknown;
+    const validated = validateWebtriggerRequest(request);
+    if (typeof validated === "number") return failure(validated);
     try {
-      parsed = JSON.parse(request.body);
-    } catch {
-      // Preserve the dispatcher's JSON-RPC parse error after authentication.
-    }
-    try {
-      if (
-        parsed !== null &&
-        typeof parsed === "object" &&
-        "params" in parsed &&
-        containsCredentials(parsed.params)
-      )
-        return failure(400);
-    } catch {
-      return failure(400);
-    }
-    if (!authorizations[0]) {
-      if (options.audit && options.installation) {
-        try {
-          const installation = options.installation(forgeContext);
-          if (installation != null)
-            await auditSession(options.audit, installation).emit(
-              "authentication",
-              "invalid-credentials",
-            );
-        } catch {
-          try {
-            options.audit.onFailure("authentication");
-          } catch {
-            /* Preserve 401. */
-          }
-        }
-      }
-      return failure(401);
-    }
-    if (!options.installation || !options.authenticate || !options.selection)
-      return failure(503);
-    try {
-      const installation = options.installation(forgeContext);
-      if (installation === undefined || installation === null)
-        return failure(503);
-      let auth: Authentication<Principal>;
-      try {
-        auth = await options.authenticate(authorizations[0], installation);
-      } catch {
-        await (options.audit &&
-          auditSession(options.audit, installation).emit(
-            "authentication",
-            "unavailable",
-          ));
-        return failure(503);
-      }
-      if (auth.kind !== "authenticated") {
-        await (options.audit &&
-          auditSession(options.audit, installation).emit(
-            "authentication",
-            auth.kind === "unauthorized"
-              ? "invalid-credentials"
-              : auth.kind === "forbidden"
-                ? "not-admin"
-                : "unavailable",
-          ));
-        return failure(
-          auth.kind === "unauthorized"
-            ? 401
-            : auth.kind === "forbidden"
-              ? 403
-              : 503,
-        );
-      }
-      if (!auth.principal || typeof auth.principal !== "object")
-        return failure(503);
+      const authenticated = await authenticate(
+        validated.authorization,
+        forgeContext,
+      );
+      if (typeof authenticated === "number") return failure(authenticated);
+      const { installation, principal } = authenticated;
+      const context = options.context(installation, principal);
+      if (context == null) return failure(503);
       const audit =
-        options.audit &&
-        auditSession(options.audit, installation, auth.principal);
-      await audit?.emit("authentication", "authenticated");
-      const context = options.context(installation, auth.principal);
-      if (context === undefined || context === null) return failure(503);
-      return json(200, await web.dispatch(request.body, context, audit));
+        options.audit && auditSession(options.audit, installation, principal);
+      return json(200, await web.dispatch(validated.body, context, audit));
     } catch {
       return failure(503);
     }

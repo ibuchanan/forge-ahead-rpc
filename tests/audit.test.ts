@@ -129,6 +129,46 @@ test("authenticator exceptions emit unavailable without exposing claims", async 
   );
 });
 
+test("audit identity failure after authentication does not dispatch", async () => {
+  calls.length = 0;
+  const response = await createWebtrigger({
+    ...options,
+    audit: {
+      ...options.audit,
+      identity: () => {
+        throw new Error("private identity failure");
+      },
+    },
+  })(request, trusted);
+  expect(response.statusCode).toBe(503);
+  expect(calls).not.toContain("write");
+});
+
+test("each authentication outcome emits exactly its mapped audit reason", async () => {
+  for (const [kind, status, reason] of [
+    ["unauthorized", 401, "invalid-credentials"],
+    ["forbidden", 403, "not-admin"],
+    ["unavailable", 503, "unavailable"],
+  ] as const) {
+    events.length = 0;
+    const response = await createWebtrigger({
+      ...options,
+      authenticate: async () => ({ kind }),
+    })(request, trusted);
+    expect(response.statusCode).toBe(status);
+    expect(
+      events.filter((event) =>
+        (event as { type: string }).type.endsWith(".authentication"),
+      ),
+    ).toHaveLength(1);
+    expect(events[0]).toEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({ reason }),
+      }),
+    );
+  }
+});
+
 test("unacknowledged timeout prevents critical execution even if delivery is uncertain", async () => {
   calls.length = 0;
   const response = await createWebtrigger({

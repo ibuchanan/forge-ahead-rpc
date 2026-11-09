@@ -429,13 +429,20 @@ test("missing Forge context is unavailable without consulting installation or au
   expect(calls).toEqual([]);
 });
 
+test("omitted selection authenticates but exposes no application methods", async () => {
+  const { selection: _selection, ...withoutSelection } = options;
+  const handle = createWebtrigger(withoutSelection);
+  const response = await handle(request(), forgeContext);
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).error.code).toBe(-32601);
+});
+
 test("missing configuration and failed authentication never run handlers", async () => {
   calls.length = 0;
   for (const config of [
     { ...options, installation: () => undefined },
     { ...options, context: undefined },
     { ...options, authenticate: undefined },
-    { ...options, selection: undefined },
     {
       ...options,
       authenticate: async () => {
