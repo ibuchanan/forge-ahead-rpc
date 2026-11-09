@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { generateContract } from "../scripts/contract";
+import { generateContract } from "../src/generator";
 
 const doc = {
   openrpc: "1.3.2",

@@ -1,7 +1,8 @@
 {
   "entry": {
     "index": "./src/index.ts",
-    "webtrigger": "./src/webtrigger.ts"
+    "webtrigger": "./src/webtrigger.ts",
+    "generator": "./src/generator.ts"
   },
   "format": ["esm", "cjs"],
   "sourcemap": true,

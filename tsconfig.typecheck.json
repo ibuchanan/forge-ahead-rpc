@@ -13,20 +13,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "rootDir": ".",
-    "types": [
-      "node",
-      "bun"
-    ]
+    "types": ["node", "bun"]
   },
-  "include": [
-    "src",
-    "test",
-    "tests"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "coverage",
-    "specs"
-  ]
+  "include": ["src", "test", "tests", "examples/tracer/**/*.ts"],
+  "exclude": ["node_modules", "dist", "coverage", "specs"]
 }

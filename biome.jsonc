@@ -11,6 +11,7 @@
     "includes": [
       "**",
       "!!**/dist",
+      "!!**/generated",
       "!!**/specs",
       "!!**/vendor",
       "!!CODE_OF_CONDUCT.md",

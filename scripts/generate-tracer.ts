@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { generateContract } from "./contract";
+import { generateContract } from "../src/generator";
 
 const [
   mode,

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ok } from "@forge-ahead/errors";
-import { generateContract } from "../scripts/contract";
+import { generateContract } from "../src/generator";
 import { createWebDispatcher } from "../src/index";
 
 const ref = "#/components/schemas/Public";

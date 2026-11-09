@@ -1,51 +1,31 @@
-> Please remove this quote block and replace the others with meaningful content. If you're looking at this on Bitbucket, be assured that it looks great on GitHub.
-
 # forge-ahead-rpc
+
+<!-- markdownlint-disable MD013 -->
+<!-- cspell:words webtrigger -->
 
 [![Atlassian license](https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square)](LICENSE) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 
-> Provide an introduction/overview of your project, and articulate the problem it solves for the broader engineering community. Potential consumers should understand **what** the project is, and **why** it exists.
+A spec-driven JSON-RPC dispatcher for Forge apps. Generate typed handlers and standalone validators from a bounded OpenRPC contract, then wire trusted app context to the runtime dispatcher. The optional webtrigger adapter requires app-owned authentication, authorization, and audit publishing; this package does not make an endpoint secure by itself.
 
-> Other recommended badges are a [version](https://shields.io/category/version) badge (e.g. `npm`) and a [build](https://shields.io/category/build) badge (e.g., `circleci` or `travis`). Order should be `license - version - build - PRs`. Please use the `flat-sqare` style.
->
-> See e.g.
->
-> [![npm version](https://img.shields.io/npm/v/react-beautiful-dnd.svg?style=flat-square)](https://www.npmjs.com/package/react-beautiful-dnd) [![npm version](https://img.shields.io/npm/v/@atlaskit/button.svg?style=flat-square)](https://www.npmjs.com/package/@atlaskit/button) [![Build Status](https://img.shields.io/travis/stricter/stricter/master?style=flat-square)](https://travis-ci.org/stricter/stricter)
+## Try it locally
 
+Use Node.js 22 and install the repository dependencies. This package is not published; no registry installation is available yet.
 
-## Usage
+```sh
+bun run build
+bun run examples/tracer/generate.ts check
+bun run typecheck
+bun test examples/tracer/dispatcher.test.ts
+```
 
-> Provide a simple and concise (code) example of your project. Consumers should understand **how** your project solves their problem.
+The [consumer fixture](examples/tracer/DEVELOPMENT.md) shows the complete spec-edit, regeneration, drift-check, handler, dispatcher-test, and endpoint review workflow. Runtime exports are `forge-ahead-rpc` (`createDispatcher`, `createExecutor`, `createWebDispatcher`) and `forge-ahead-rpc/webtrigger` (`createWebtrigger`, the internal-use-only `createJiraAdminAuthenticator`). The separate `forge-ahead-rpc/generator` export is build-time tooling and must not be imported by deployed handlers.
 
-## Installation
-
-> Provide instructions on how to install and configure the project.
-
-## Documentation
-
-> If your project is small and simple enough, documentation can be added here. For larger projects, provide a link to where the documentation lives.
-
-## Tests
-
-> Describe and show how to run the tests with code examples.
+See the [OpenRPC profile](docs/reference/openrpc-profile.md) and [development guide](DEVELOPMENT.md). Local tests do not establish deployed Forge security or production readiness.
 
 ## Contributions
 
-Contributions to forge-ahead-rpc are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Copyright (c) [YYYY] Atlassian US., Inc.
-Apache 2.0 licensed, see [LICENSE](LICENSE) file.
-
-<br/>
-
-> Pick one of the following:
-
-[![With ❤️ from Atlassian](https://raw.githubusercontent.com/atlassian-internal/oss-assets/master/banner-cheers.png)](https://www.atlassian.com)
-
-[![With ❤️ from Atlassian](https://raw.githubusercontent.com/atlassian-internal/oss-assets/master/banner-with-thanks.png)](https://www.atlassian.com)
-
-[![With ❤️ from Atlassian](https://raw.githubusercontent.com/atlassian-internal/oss-assets/master/banner-with-thanks-light.png)](https://www.atlassian.com)
-
-[![With ❤️ from Atlassian](https://raw.githubusercontent.com/atlassian-internal/oss-assets/master/banner-cheers-light.png)](https://www.atlassian.com)
+Copyright (c) Atlassian US., Inc. Licensed under [Apache 2.0](LICENSE).

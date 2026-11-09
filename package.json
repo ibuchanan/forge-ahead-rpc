@@ -26,6 +26,16 @@
         "types": "./dist/webtrigger.d.cts",
         "default": "./dist/webtrigger.cjs"
       }
+    },
+    "./generator": {
+      "import": {
+        "types": "./dist/generator.d.ts",
+        "default": "./dist/generator.mjs"
+      },
+      "require": {
+        "types": "./dist/generator.d.cts",
+        "default": "./dist/generator.cjs"
+      }
     }
   },
   "main": "dist/index.cjs",

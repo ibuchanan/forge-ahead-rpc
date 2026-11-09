@@ -1,6 +1,6 @@
 import Ajv from "ajv";
 import standaloneCode from "ajv/dist/standalone/index.js";
-import { methodMetadata } from "../src/exposure";
+import { methodMetadata } from "./exposure";
 
 type Obj = Record<string, unknown>;
 const schemaKeys = new Set([
