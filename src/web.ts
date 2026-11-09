@@ -27,15 +27,12 @@ export type WebOptions<Context> = Options<Context> & {
 
 declare const __RPC_DEV_PROFILE__: boolean;
 
-/** Select all reviewed web methods only in a development build; never derive buildTarget from runtime installation settings. */
+/** Select all reviewed web methods only when enabled by the development build. */
 export function createTestProfileSelection<Context>(
   webPolicy: WebOptions<Context>["webPolicy"],
-  buildTarget: "development" | "production",
   productionSelection: (context: Context) => Record<string, Mode>,
 ): (context: Context) => Record<string, Mode> {
-  return buildTarget === "development" &&
-    typeof __RPC_DEV_PROFILE__ !== "undefined" &&
-    __RPC_DEV_PROFILE__
+  return typeof __RPC_DEV_PROFILE__ !== "undefined" && __RPC_DEV_PROFILE__
     ? () =>
         Object.fromEntries(
           Object.entries(webPolicy).map(([name, policy]) => [

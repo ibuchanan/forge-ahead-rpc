@@ -82,30 +82,25 @@ test("all specified commands run in memory with an explicitly trusted test princ
 
 test("development selects reviewed web methods, while production keeps its trusted subset", async () => {
   const production = () => ({ second: "asApp" as const });
-  for (const [build, expected] of [
-    ["development", ["second"]],
-    ["production", ["second"]],
-  ] as const) {
-    const web = createWebDispatcher({
-      ...shared,
-      selection: createTestProfileSelection(webPolicy, build, production),
-      authorize: () => true,
-      canActAsUser: () => true,
-    });
-    expect(
-      (
-        (await web.dispatch(call("rpc.discover"), trusted)) as {
-          result: { methods: { name: string }[] };
-        }
-      ).result.methods.map(({ name }) => name),
-    ).toEqual([...expected]);
-    expect(await web.dispatch(call("internal"), trusted)).toMatchObject({
-      error: { code: -32601 },
-    });
-    expect(await web.dispatch(call("first"), trusted)).toMatchObject({
-      error: { code: -32601 },
-    });
-  }
+  const web = createWebDispatcher({
+    ...shared,
+    selection: createTestProfileSelection(webPolicy, production),
+    authorize: () => true,
+    canActAsUser: () => true,
+  });
+  expect(
+    (
+      (await web.dispatch(call("rpc.discover"), trusted)) as {
+        result: { methods: { name: string }[] };
+      }
+    ).result.methods.map(({ name }) => name),
+  ).toEqual(["second"]);
+  expect(await web.dispatch(call("internal"), trusted)).toMatchObject({
+    error: { code: -32601 },
+  });
+  expect(await web.dispatch(call("first"), trusted)).toMatchObject({
+    error: { code: -32601 },
+  });
   expect(
     (
       (await createWebDispatcher({ ...shared }).dispatch(
@@ -129,14 +124,11 @@ test("compiled production and development builds cannot be switched by runtime i
     developmentPath
   );
   const ordinary = () => ({ second: "asApp" as const });
-  expect(production(webPolicy, "development", ordinary)(trusted)).toEqual({
+  expect(production(webPolicy, ordinary)(trusted)).toEqual({
     second: "asApp",
   });
-  expect(development(webPolicy, "development", ordinary)(trusted)).toEqual({
+  expect(development(webPolicy, ordinary)(trusted)).toEqual({
     first: "asUser",
-    second: "asApp",
-  });
-  expect(development(webPolicy, "production", ordinary)(trusted)).toEqual({
     second: "asApp",
   });
 });
@@ -172,7 +164,7 @@ test("development webtrigger authenticates every call and preserves declared exe
       installation: site,
       principal: verified,
     }),
-    selection: developmentSelection(webPolicy, "development", () => ({})),
+    selection: developmentSelection(webPolicy, () => ({})),
     authorize: (_method, mode) => {
       modes.push(mode);
       return true;
