@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createProblemCatalog, err, ok } from "@forge-ahead/errors";
+import { err, ok } from "@forge-ahead/errors";
 import {
   createDispatcher,
   createExecutor,
@@ -107,7 +107,9 @@ test("a declared application failure keeps its sanitized code while undeclared f
     outputValidators: {
       preview: (value: unknown) => typeof value === "string",
     },
-    errorMap: { "not-configured": { code: -32002, message: "Not configured" } },
+    errorCatalog: {
+      "not-configured": { code: -32002, title: "Not configured" },
+    },
   });
   const request = (text: string) => ({
     jsonrpc: "2.0",
@@ -159,45 +161,34 @@ test("explicit internal failure stays internal rather than becoming a retryable 
   ).toEqual(failure(-32603, "Internal error", 1));
 });
 
-test("rejects application mappings that collide with protocol errors or contain unsafe messages", () => {
-  const options = {
-    handlers: {},
-    inputValidators: {},
-    outputValidators: {},
-  };
-  expect(() =>
-    createDispatcher({
-      ...options,
-      errorMap: { bad: { code: -32601, message: "Bad" } },
-    }),
-  ).toThrow();
-  expect(() =>
-    createDispatcher({
-      ...options,
-      errorMap: { bad: { code: -32002, message: "secret\nvalue" } },
-    }),
-  ).toThrow();
-  expect(() =>
-    createDispatcher({
-      ...options,
-      errorMap: { "invalid-params": { code: -32002, message: "Oops" } },
-    }),
-  ).toThrow();
-  for (const code of [-32000, -32001])
+test("rejects invalid catalog definitions at construction", () => {
+  const options = { handlers: {}, inputValidators: {}, outputValidators: {} };
+  for (const definition of [
+    { bad: { code: -32601, title: "Bad" } },
+    { bad: { code: -32002, title: "secret\nvalue" } },
+    { "invalid-params": { code: -32002, title: "Oops" } },
+    { bad: { code: -32000, title: "Bad" } },
+    { bad: { code: -32001, title: "Bad" } },
+    {
+      bad: { code: -32002, title: "Bad" },
+      other: { code: -32002, title: "Other" },
+    },
+  ]) {
     expect(() =>
-      createDispatcher({
-        ...options,
-        errorMap: { bad: { code, message: "Bad" } },
-      }),
+      createExecutor({ ...options, errorCatalog: definition }),
     ).toThrow();
+    expect(() =>
+      createDispatcher({ ...options, errorCatalog: definition }),
+    ).toThrow();
+  }
 });
 
 test("default catalog and app-owned catalog project safe JSON-RPC errors", async () => {
   expect(rpcErrorCatalog.get("invalid-params")?.code).toBe(-32602);
-  const catalog = createProblemCatalog("urn:example:rpc", {
+  const catalog = {
     "invalid-params": { title: "Bad arguments", code: -32602 },
     "not-configured": { title: "Not configured", code: -32002 },
-  });
+  };
   const options = {
     handlers: {
       preview: async ({ text }: { text: string }) =>
@@ -212,7 +203,7 @@ test("default catalog and app-owned catalog project safe JSON-RPC errors", async
     outputValidators: { preview: () => true },
     errorCatalog: catalog,
   };
-  const execute = createExecutor<object, "not-configured">(options);
+  const execute = createExecutor(options);
   expect(
     (await execute("preview", { text: "missing" }, {}))._unsafeUnwrapErr(),
   ).toBe("not-configured");
@@ -250,7 +241,7 @@ test("handlers cannot claim dispatcher-owned protocol failures", async () => {
     ).toEqual(failure(-32000, "Command failed", 1));
 });
 
-test("rejects unsafe catalog overrides and fails closed on malformed app entries", async () => {
+test("rejects unsafe catalog overrides and malformed application entries", () => {
   const base = {
     handlers: { preview: async () => err("bad") },
     inputValidators: { preview: () => true },
@@ -260,18 +251,53 @@ test("rejects unsafe catalog overrides and fails closed on malformed app entries
     { title: "Wrong code", code: -32002 },
     { title: "secret\nvalue", code: -32602 },
   ]) {
-    const errorCatalog = createProblemCatalog("urn:example:rpc", {
-      "invalid-params": entry,
-    });
+    const errorCatalog = { "invalid-params": entry };
     expect(() => createDispatcher({ ...base, errorCatalog })).toThrow();
   }
-  const errorCatalog = createProblemCatalog("urn:example:rpc", {
-    bad: { title: "Unsafe\nmessage", code: -32002 },
-  });
-  const app = createDispatcher({ ...base, errorCatalog });
-  expect(
-    await app({ jsonrpc: "2.0", id: 9, method: "preview", params: {} }, {}),
-  ).toEqual(failure(-32000, "Command failed", 9));
+  const invalidCode = { bad: { title: "Bad", code: -32601 } };
+  expect(() =>
+    createExecutor({ ...base, errorCatalog: invalidCode }),
+  ).toThrow();
+  expect(() =>
+    createDispatcher({ ...base, errorCatalog: invalidCode }),
+  ).toThrow();
+  const errorCatalog = { bad: { title: "Unsafe\nmessage", code: -32002 } };
+  expect(() => createDispatcher({ ...base, errorCatalog })).toThrow();
+});
+
+test("catalog-only mapping rejects reserved handler names and unknown failures", async () => {
+  const catalog = {
+    "parse-error": { title: "Parse again", code: -32700 },
+    "invalid-params": { title: "Bad arguments", code: -32602 },
+    "not-configured": { title: "Not configured", code: -32002 },
+  };
+  const options = {
+    handlers: {
+      preview: async ({ reason }: { reason: string }) => err(reason),
+    },
+    inputValidators: { preview: () => true },
+    outputValidators: { preview: () => true },
+    errorCatalog: catalog,
+  };
+  const execute = createExecutor(options);
+  const app = createDispatcher(options);
+  for (const [name, expected] of [
+    ["not-configured", failure(-32002, "Not configured", 1)],
+    ["invalid-params", failure(-32602, "Bad arguments", 1)],
+    ["parse-error", failure(-32000, "Command failed", 1)],
+    ["unknown", failure(-32000, "Command failed", 1)],
+  ] as const) {
+    const outcome = await execute("preview", { reason: name }, {});
+    expect(outcome._unsafeUnwrapErr()).toBe(
+      expected.error.code === -32000 ? "command-failed" : name,
+    );
+    expect(
+      await app(
+        { jsonrpc: "2.0", id: 1, method: "preview", params: { reason: name } },
+        {},
+      ),
+    ).toEqual(expected);
+  }
 });
 
 test("invalid output after a write reports internal failure without repeating the write", async () => {

@@ -1,14 +1,14 @@
 import {
+  type CatalogProblemDefinition,
   createProblemCatalog,
   err,
   ok,
-  type ProblemCatalog,
   type Result,
 } from "@forge-ahead/errors";
 import type { AuditPhase, AuditReason } from "./audit";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
 
-export const rpcErrorCatalog = createProblemCatalog("urn:forge-ahead:rpc", {
+const builtinDefinitions = {
   "parse-error": { title: "Parse error", code: -32700 },
   "invalid-request": { title: "Invalid request", code: -32600 },
   "method-not-found": { title: "Method not found", code: -32601 },
@@ -16,73 +16,66 @@ export const rpcErrorCatalog = createProblemCatalog("urn:forge-ahead:rpc", {
   "internal-error": { title: "Internal error", code: -32603 },
   "command-failed": { title: "Command failed", code: -32000 },
   forbidden: { title: "Forbidden", code: -32001 },
-});
-
-const builtins = [
+};
+export const rpcErrorCatalog = createProblemCatalog(
+  "urn:forge-ahead:rpc",
+  builtinDefinitions,
+);
+const builtinNames = Object.keys(builtinDefinitions);
+const handlerReserved = new Set<string>([
   "parse-error",
   "invalid-request",
   "method-not-found",
-  "invalid-params",
-  "internal-error",
-  "command-failed",
-  "forbidden",
-] as const;
+]);
+const validTitle = (title: unknown): title is string =>
+  typeof title === "string" && /^[\x20-\x7e]{1,120}$/.test(title);
+type PublicError = { code: number; message: string };
 
-function publicError(
-  name: string,
-  catalog?: ProblemCatalog,
-): { code: number; message: string } | undefined {
-  const standard = rpcErrorCatalog.get(name);
-  const definition = catalog?.get(name) ?? standard;
-  if (!definition) return undefined;
-  const { code, title } = definition;
-  if (
-    typeof code !== "number" ||
-    !Number.isInteger(code) ||
-    typeof title !== "string" ||
-    !/^[\x20-\x7e]{1,120}$/.test(title) ||
-    (standard ? code !== standard.code : code < -32099 || code > -32002)
-  ) {
-    if (standard) throw new Error("invalid application error mapping");
-    return undefined;
+function resolveErrors(
+  definitions: Record<string, CatalogProblemDefinition> = {},
+) {
+  const errors = new Map<string, PublicError>();
+  for (const name of builtinNames) {
+    const entry = rpcErrorCatalog.get(name);
+    if (!entry || entry.code === undefined)
+      throw new Error("invalid built-in error mapping");
+    errors.set(name, { code: entry.code, message: entry.title });
   }
-  return { code, message: title };
+  const codes = new Set<number>();
+  for (const [name, entry] of Object.entries(definitions)) {
+    const standard = errors.get(name);
+    const code = entry?.code;
+    if (
+      !entry ||
+      !validTitle(entry.title) ||
+      !Number.isInteger(code) ||
+      (standard
+        ? code !== standard.code
+        : (code ?? 0) < -32099 || (code ?? 0) > -32002) ||
+      (!standard && codes.has(code as number))
+    )
+      throw new Error("invalid application error mapping");
+    errors.set(name, { code: code as number, message: entry.title });
+    if (!standard) codes.add(code as number);
+  }
+  return errors;
 }
 
 /** Execute one catalog command without JSON-RPC framing. */
-export function createExecutor<Context, Failure extends string = never>(
-  options: Options<Context, Failure>,
+export function createExecutor<Context>(options: Options<Context>) {
+  const errors = resolveErrors(options.errorCatalog);
+  return executor(options, errors);
+}
+
+function executor<Context>(
+  options: Options<Context>,
+  errors: Map<string, PublicError>,
 ) {
-  validateErrorMap(options.errorMap);
-  for (const name of builtins) publicError(name, options.errorCatalog);
-  for (const [name, entry] of Object.entries(
-    (options.errorMap ?? {}) as Record<
-      string,
-      { code: number; message: string }
-    >,
-  )) {
-    const catalogEntry = options.errorCatalog?.get(name);
-    if (
-      catalogEntry &&
-      (catalogEntry.code !== entry.code || catalogEntry.title !== entry.message)
-    )
-      throw new Error("conflicting application error mapping");
-  }
   return async (
     method: string,
     params: unknown,
     context: Context,
-  ): Promise<
-    Result<
-      unknown,
-      | "method-not-found"
-      | "invalid-params"
-      | "command-failed"
-      | "internal-error"
-      | "forbidden"
-      | Failure
-    >
-  > => {
+  ): Promise<Result<unknown, string>> => {
     const handler = Object.hasOwn(options.handlers, method)
       ? options.handlers[method]
       : undefined;
@@ -98,20 +91,11 @@ export function createExecutor<Context, Failure extends string = never>(
       const result = await handler(params as never, context);
       if (result.isErr())
         return err(
-          result.error === "forbidden" ||
-            result.error === "invalid-params" ||
-            result.error === "internal-error"
+          typeof result.error === "string" &&
+            !handlerReserved.has(result.error) &&
+            errors.has(result.error)
             ? result.error
-            : typeof result.error === "string" &&
-                ![
-                  "parse-error",
-                  "invalid-request",
-                  "method-not-found",
-                ].includes(result.error) &&
-                (Object.hasOwn(options.errorMap ?? {}, result.error) ||
-                  publicError(result.error, options.errorCatalog))
-              ? (result.error as Failure)
-              : "command-failed",
+            : "command-failed",
         );
       return output(result.value) ? ok(result.value) : err("internal-error");
     } catch {
@@ -120,43 +104,15 @@ export function createExecutor<Context, Failure extends string = never>(
   };
 }
 
-function validateErrorMap(
-  map: Record<string, { code: number; message: string }> | undefined,
-) {
-  const codes = new Set<number>();
-  for (const [name, entry] of Object.entries(map ?? {})) {
-    if (
-      [
-        "method-not-found",
-        "invalid-params",
-        "command-failed",
-        "internal-error",
-        "forbidden",
-      ].includes(name) ||
-      !entry ||
-      !Number.isInteger(entry.code) ||
-      entry.code < -32099 ||
-      entry.code > -32002 ||
-      codes.has(entry.code) ||
-      typeof entry.message !== "string" ||
-      !/^[\x20-\x7e]{1,120}$/.test(entry.message)
-    )
-      throw new Error("invalid application error mapping");
-    codes.add(entry.code);
-  }
-}
-
 type Validator = (value: unknown) => boolean;
 type Handler<Context> = (
   params: never,
   context: Context,
 ) => Promise<Result<unknown, unknown>>;
-type Options<Context, Failure extends string = never> = {
+type Options<Context> = {
   handlers: Record<string, Handler<Context>>;
-  /** App-owned definitions can override built-in titles (not codes) and register failures. */
-  errorCatalog?: ProblemCatalog;
-  /** Legacy per-name mapping; prefer errorCatalog for new integrations. */
-  errorMap?: Record<Failure, { code: number; message: string }>;
+  /** Named app definitions can override built-in titles (not codes) and register failures. */
+  errorCatalog?: Record<string, CatalogProblemDefinition>;
   inputValidators: Record<string, Validator>;
   outputValidators: Record<string, Validator>;
   critical?: (method: string) => boolean;
@@ -174,10 +130,7 @@ type Options<Context, Failure extends string = never> = {
         | undefined
       >;
 };
-export type WebOptions<Context, Failure extends string = never> = Options<
-  Context,
-  Failure
-> & {
+export type WebOptions<Context> = Options<Context> & {
   /** Generated reviewed maximum; must match the catalog before serving requests. */
   webPolicy: Record<
     string,
@@ -227,8 +180,8 @@ export type DispatchAudit = {
 };
 
 /** Create views and a web-scoped in-memory dispatcher; caller authenticates before invoking dispatch. */
-export function createWebDispatcher<Context, Failure extends string = never>(
-  options: WebOptions<Context, Failure>,
+export function createWebDispatcher<Context>(
+  options: WebOptions<Context>,
   requireAudit = false,
 ) {
   const eligible = new Map<string, Mode>();
@@ -318,14 +271,20 @@ type Response =
     };
 
 /** In-memory single-call JSON-RPC 2.0 subset. Context is supplied by the caller, never the request. */
-export function createDispatcher<Context, Failure extends string = never>(
-  options: Options<Context, Failure>,
+export function createDispatcher<Context>(
+  options: Options<Context>,
 ): (
   request: unknown,
   context: Context,
   audit?: DispatchAudit,
 ) => Promise<Response> {
-  const execute = createExecutor(options);
+  const errors = resolveErrors(options.errorCatalog);
+  const execute = executor(options, errors);
+  const requiredError = (name: string): PublicError => {
+    const definition = errors.get(name);
+    if (!definition) throw new Error("missing built-in error mapping");
+    return definition;
+  };
   return async (request, context, audit) => {
     let parsed: unknown = request;
     if (typeof request === "string") {
@@ -335,10 +294,7 @@ export function createDispatcher<Context, Failure extends string = never>(
         return {
           jsonrpc: "2.0",
           id: null,
-          error: publicError("parse-error", options.errorCatalog) ?? {
-            code: -32700,
-            message: "Parse error",
-          },
+          error: requiredError("parse-error"),
         };
       }
     }
@@ -352,13 +308,7 @@ export function createDispatcher<Context, Failure extends string = never>(
         ? (value["id"] as string | number)
         : null;
     const error = (name: string, message?: string): Response => {
-      const definition = (Object.hasOwn(options.errorMap ?? {}, name)
-        ? options.errorMap?.[name as Failure]
-        : undefined) ??
-        publicError(name, options.errorCatalog) ?? {
-          code: -32000,
-          message: "Command failed",
-        };
+      const definition = errors.get(name) ?? requiredError("command-failed");
       return {
         jsonrpc: "2.0",
         id,
@@ -381,9 +331,7 @@ export function createDispatcher<Context, Failure extends string = never>(
       return error("invalid-request");
     }
     if (options.web) {
-      let gate: Awaited<
-        ReturnType<NonNullable<Options<Context, Failure>["web"]>>
-      >;
+      let gate: Awaited<ReturnType<NonNullable<Options<Context>["web"]>>>;
       try {
         gate = await options.web(value["method"], context, audit);
       } catch {

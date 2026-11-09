@@ -12,15 +12,12 @@ Handlers return a promise of a semantic `Result`. Unknown handler failures
 become `command-failed`; explicit `invalid-params`, `forbidden`, and
 `internal-error` keep those sanitized categories. `rpcErrorCatalog` is the
 library-owned `@forge-ahead/errors` catalog of protocol and command defaults.
-Pass an app-owned `errorCatalog` created with `createProblemCatalog(baseUri,
-definitions)` to register named failures or override built-in titles while
-keeping their codes. Only registered names are returned by the executor;
-the dispatcher projects each definition's `code` and `title` to public
-`{ code, message }`, never its per-occurrence `detail` or `data`. App failures
-must have codes from -32099 through -32002 and titles of 1–120 printable ASCII
-characters; malformed app definitions fall back to `command-failed`.
-Invalid built-in overrides fail at construction. The older `errorMap` option
-remains supported for named failures, but cannot conflict with a catalog entry.
+Pass an app-owned `errorCatalog` of named definitions (each with `code` and
+`title`) to register failures or override built-in titles while keeping their
+codes. Only registered names are returned by the executor; the dispatcher
+projects each definition to public `{ code, message }`, never handler details.
+App failures must have codes from -32099 through -32002 and titles of 1–120
+printable ASCII characters. Invalid definitions fail at construction.
 Unmapped failures never expose handler details. Handler exceptions and invalid
 successful output become `internal-error`; rejected input becomes
 `invalid-params`.
