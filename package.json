@@ -2,7 +2,7 @@
   "name": "forge-ahead-rpc",
   "version": "0.1.0",
   "private": true,
-  "description": "",
+  "description": "JSON-RPC dispatch and webtrigger transport for Atlassian Forge",
   "license": "Apache-2.0",
   "author": "ibuchanan",
   "type": "module",
@@ -86,11 +86,10 @@
     "npm-run-all2": "9.0.3",
     "publint": "0.3.25",
     "tsdown": "0.23.1",
-    "typescript": "5.9.3",
-    "vitest": "^5.1.0"
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "@forge-ahead/errors": "github:ibuchanan/forge-ahead-errors"
+    "@forge-ahead/errors": "github:ibuchanan/forge-ahead-errors#a1dc9a41aa0d57830f5158ad6564e9984dc73390"
   },
   "trustedDependencies": [
     "@forge-ahead/errors"

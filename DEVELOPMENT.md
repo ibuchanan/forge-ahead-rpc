@@ -1,6 +1,12 @@
 # Development
 
-Install dependencies with `npm install`.
+Install dependencies with `npm install`. After changing dependencies in
+`package.json`, run `npm install --package-lock-only --ignore-scripts` to refresh
+the npm lockfile, then install and run the checks. The npm lockfile and
+pack/release lifecycle use npm; tests and TypeScript utilities use Bun. The
+package stays `private` until an explicit publishing decision and
+release-readiness review.
+
 Run the checks before sending a pull request:
 
 ```sh
