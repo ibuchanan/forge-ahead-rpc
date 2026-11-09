@@ -18,18 +18,23 @@ type Authentication<Principal> =
   | { kind: "authenticated"; principal: Principal }
   | { kind: "unauthorized" | "forbidden" | "unavailable" };
 
-export type WebtriggerOptions<Context, ForgeContext, Installation, Principal> =
-  WebOptions<Context> & {
-    installation: (context: ForgeContext) => Installation | undefined;
-    authenticate: (
-      authorization: string,
-      installation: Installation,
-    ) => Promise<Authentication<Principal>>;
-    /** Construct handler context only from independently verified values. */
-    context: (installation: Installation, principal: Principal) => Context;
-    /** App-provided acknowledged CloudEvents publisher; required for critical methods. */
-    audit?: AuditPort<Installation, Principal>;
-  };
+export type WebtriggerOptions<
+  Context,
+  ForgeContext,
+  Installation,
+  Principal,
+  Failure extends string = never,
+> = WebOptions<Context, Failure> & {
+  installation: (context: ForgeContext) => Installation | undefined;
+  authenticate: (
+    authorization: string,
+    installation: Installation,
+  ) => Promise<Authentication<Principal>>;
+  /** Construct handler context only from independently verified values. */
+  context: (installation: Installation, principal: Principal) => Context;
+  /** App-provided acknowledged CloudEvents publisher; required for critical methods. */
+  audit?: AuditPort<Installation, Principal>;
+};
 
 /** Internal-use Jira admin verifier. The caller provides a Jira HTTP port; do not use for distributable apps. */
 export function createJiraAdminAuthenticator(
@@ -128,7 +133,16 @@ export function createWebtrigger<
   ForgeContext,
   Installation,
   Principal,
->(options: WebtriggerOptions<Context, ForgeContext, Installation, Principal>) {
+  Failure extends string = never,
+>(
+  options: WebtriggerOptions<
+    Context,
+    ForgeContext,
+    Installation,
+    Principal,
+    Failure
+  >,
+) {
   const web = createWebDispatcher(options, true);
   if (
     Object.values(options.webPolicy).some(
@@ -149,8 +163,10 @@ export function createWebtrigger<
     throw new Error("invalid audit configuration");
   return async (
     request: WebtriggerRequest,
-    forgeContext: ForgeContext,
+    forgeContext?: ForgeContext,
   ): Promise<WebtriggerResponse> => {
+    if (forgeContext === undefined || forgeContext === null)
+      return failure(503);
     if (request.method !== "POST") return failure(405);
     if (
       request.headers !== undefined &&

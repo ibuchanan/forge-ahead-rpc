@@ -406,6 +406,31 @@ test("ingress rejects before dispatch with stable precedence and no secret leaka
   expect(calls).toEqual([]);
 });
 
+test("missing Forge context is unavailable without consulting installation or authentication", async () => {
+  calls.length = 0;
+  let installationCalls = 0;
+  let authenticationCalls = 0;
+  const handle = createWebtrigger({
+    ...options,
+    installation: (_context: { installation?: { id: string } }) => {
+      installationCalls++;
+      return { id: "trusted" };
+    },
+    authenticate: async () => {
+      authenticationCalls++;
+      return {
+        kind: "authenticated" as const,
+        principal: { accountId: "verified" },
+      };
+    },
+  });
+  const response = await handle(request());
+  expect(response.statusCode).toBe(503);
+  expect(installationCalls).toBe(0);
+  expect(authenticationCalls).toBe(0);
+  expect(calls).toEqual([]);
+});
+
 test("missing configuration and failed authentication never run handlers", async () => {
   calls.length = 0;
   for (const config of [

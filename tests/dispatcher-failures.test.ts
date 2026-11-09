@@ -88,6 +88,106 @@ test("unknown methods, invalid params, expected errors and exceptions are safe",
   expect(writes).toEqual(["denied", "throw"]);
 });
 
+test("a declared application failure keeps its sanitized code while undeclared failures stay generic", async () => {
+  const app = createDispatcher({
+    handlers: {
+      preview: async ({ text }: { text: string }) =>
+        text === "missing" ? err("not-configured") : err("private detail"),
+    },
+    inputValidators: {
+      preview: (value: unknown) =>
+        !!value &&
+        typeof value === "object" &&
+        typeof (value as { text?: unknown }).text === "string",
+    },
+    outputValidators: {
+      preview: (value: unknown) => typeof value === "string",
+    },
+    errorMap: { "not-configured": { code: -32002, message: "Not configured" } },
+  });
+  const request = (text: string) => ({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "preview",
+    params: { text },
+  });
+  expect(await app(request("missing"), {})).toEqual(
+    failure(-32002, "Not configured", 7),
+  );
+  expect(await app(request("other"), {})).toEqual(
+    failure(-32000, "Command failed", 7),
+  );
+});
+
+test("explicit handler denial and validation failures retain sanitized built-in responses", async () => {
+  const app = createDispatcher({
+    handlers: {
+      command: async ({ reason }: { reason: string }) =>
+        err(reason === "denied" ? "forbidden" : "invalid-params"),
+    },
+    inputValidators: {
+      command: (value: unknown) => !!value && typeof value === "object",
+    },
+    outputValidators: { command: () => true },
+  });
+  const request = (reason: string) => ({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "command",
+    params: { reason },
+  });
+  expect(await app(request("denied"), {})).toEqual(
+    failure(-32001, "Forbidden", 6),
+  );
+  expect(await app(request("bad"), {})).toEqual(
+    failure(-32602, "Invalid params", 6),
+  );
+});
+
+test("explicit internal failure stays internal rather than becoming a retryable command failure", async () => {
+  const app = createDispatcher({
+    handlers: { command: async () => err("internal-error") },
+    inputValidators: { command: () => true },
+    outputValidators: { command: () => true },
+  });
+  expect(
+    await app({ jsonrpc: "2.0", id: 1, method: "command", params: {} }, {}),
+  ).toEqual(failure(-32603, "Internal error", 1));
+});
+
+test("rejects application mappings that collide with protocol errors or contain unsafe messages", () => {
+  const options = {
+    handlers: {},
+    inputValidators: {},
+    outputValidators: {},
+  };
+  expect(() =>
+    createDispatcher({
+      ...options,
+      errorMap: { bad: { code: -32601, message: "Bad" } },
+    }),
+  ).toThrow();
+  expect(() =>
+    createDispatcher({
+      ...options,
+      errorMap: { bad: { code: -32002, message: "secret\nvalue" } },
+    }),
+  ).toThrow();
+  expect(() =>
+    createDispatcher({
+      ...options,
+      errorMap: { "invalid-params": { code: -32002, message: "Oops" } },
+    }),
+  ).toThrow();
+  for (const code of [-32000, -32001])
+    expect(() =>
+      createDispatcher({
+        ...options,
+        errorMap: { bad: { code, message: "Bad" } },
+      }),
+    ).toThrow();
+});
+
 test("invalid output after a write reports internal failure without repeating the write", async () => {
   writes.length = 0;
   expect(await dispatch(call("invalid-output", 5), {})).toEqual(

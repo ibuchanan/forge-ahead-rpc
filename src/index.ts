@@ -3,7 +3,10 @@ import type { AuditPhase, AuditReason } from "./audit";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
 
 /** Execute one catalog command without JSON-RPC framing. */
-export function createExecutor<Context>(options: Options<Context>) {
+export function createExecutor<Context, Failure extends string = never>(
+  options: Options<Context, Failure>,
+) {
+  validateErrorMap(options.errorMap);
   return async (
     method: string,
     params: unknown,
@@ -15,6 +18,8 @@ export function createExecutor<Context>(options: Options<Context>) {
       | "invalid-params"
       | "command-failed"
       | "internal-error"
+      | "forbidden"
+      | Failure
     >
   > => {
     const handler = Object.hasOwn(options.handlers, method)
@@ -30,7 +35,17 @@ export function createExecutor<Context>(options: Options<Context>) {
     try {
       if (!input(params)) return err("invalid-params");
       const result = await handler(params as never, context);
-      if (result.isErr()) return err("command-failed");
+      if (result.isErr())
+        return err(
+          result.error === "forbidden" ||
+            result.error === "invalid-params" ||
+            result.error === "internal-error"
+            ? result.error
+            : typeof result.error === "string" &&
+                Object.hasOwn(options.errorMap ?? {}, result.error)
+              ? (result.error as Failure)
+              : "command-failed",
+        );
       return output(result.value) ? ok(result.value) : err("internal-error");
     } catch {
       return err("internal-error");
@@ -38,13 +53,41 @@ export function createExecutor<Context>(options: Options<Context>) {
   };
 }
 
+function validateErrorMap(
+  map: Record<string, { code: number; message: string }> | undefined,
+) {
+  const codes = new Set<number>();
+  for (const [name, entry] of Object.entries(map ?? {})) {
+    if (
+      [
+        "method-not-found",
+        "invalid-params",
+        "command-failed",
+        "internal-error",
+        "forbidden",
+      ].includes(name) ||
+      !entry ||
+      !Number.isInteger(entry.code) ||
+      entry.code < -32099 ||
+      entry.code > -32002 ||
+      codes.has(entry.code) ||
+      typeof entry.message !== "string" ||
+      !/^[\x20-\x7e]{1,120}$/.test(entry.message)
+    )
+      throw new Error("invalid application error mapping");
+    codes.add(entry.code);
+  }
+}
+
 type Validator = (value: unknown) => boolean;
 type Handler<Context> = (
   params: never,
   context: Context,
 ) => Promise<Result<unknown, unknown>>;
-type Options<Context> = {
+type Options<Context, Failure extends string = never> = {
   handlers: Record<string, Handler<Context>>;
+  /** Only explicitly mapped application failures are exposed to callers. */
+  errorMap?: Record<Failure, { code: number; message: string }>;
   inputValidators: Record<string, Validator>;
   outputValidators: Record<string, Validator>;
   critical?: (method: string) => boolean;
@@ -62,7 +105,10 @@ type Options<Context> = {
         | undefined
       >;
 };
-export type WebOptions<Context> = Options<Context> & {
+export type WebOptions<Context, Failure extends string = never> = Options<
+  Context,
+  Failure
+> & {
   /** Generated reviewed maximum; must match the catalog before serving requests. */
   webPolicy: Record<
     string,
@@ -112,8 +158,8 @@ export type DispatchAudit = {
 };
 
 /** Create views and a web-scoped in-memory dispatcher; caller authenticates before invoking dispatch. */
-export function createWebDispatcher<Context>(
-  options: WebOptions<Context>,
+export function createWebDispatcher<Context, Failure extends string = never>(
+  options: WebOptions<Context, Failure>,
   requireAudit = false,
 ) {
   const eligible = new Map<string, Mode>();
@@ -203,8 +249,8 @@ type Response =
     };
 
 /** In-memory single-call JSON-RPC 2.0 subset. Context is supplied by the caller, never the request. */
-export function createDispatcher<Context>(
-  options: Options<Context>,
+export function createDispatcher<Context, Failure extends string = never>(
+  options: Options<Context, Failure>,
 ): (
   request: unknown,
   context: Context,
@@ -254,7 +300,9 @@ export function createDispatcher<Context>(
       return error(-32600, "Invalid request");
     }
     if (options.web) {
-      let gate: Awaited<ReturnType<NonNullable<Options<Context>["web"]>>>;
+      let gate: Awaited<
+        ReturnType<NonNullable<Options<Context, Failure>["web"]>>
+      >;
       try {
         gate = await options.web(value["method"], context, audit);
       } catch {
@@ -278,14 +326,25 @@ export function createDispatcher<Context>(
       value["method"],
     );
     if (outcome.isOk()) return { jsonrpc: "2.0", id, result: outcome.value };
+    if (
+      typeof outcome.error === "string" &&
+      Object.hasOwn(options.errorMap ?? {}, outcome.error)
+    ) {
+      const mapped = options.errorMap?.[outcome.error as Failure];
+      if (mapped) return error(mapped.code, mapped.message);
+    }
     switch (outcome.error) {
       case "method-not-found":
         return error(-32601, "Method not found");
       case "invalid-params":
         return error(-32602, "Invalid params");
+      case "forbidden":
+        return error(-32001, "Forbidden");
       case "command-failed":
         return error(-32000, "Command failed");
       case "internal-error":
+        return error(-32603, "Internal error");
+      default:
         return error(-32603, "Internal error");
     }
   };

@@ -8,11 +8,16 @@ a promise of `@forge-ahead/errors` `Result`. The caller supplies trusted
 context separately from untrusted params; request fields never become context.
 `options` holds `handlers`, `inputValidators`, and `outputValidators`, all
 keyed by wire method name. A method requires all three entries to be routable.
-Handlers return a promise of a semantic `Result`; expected error values are
-not exposed to RPC callers. The executor returns `method-not-found`,
-`invalid-params`, `command-failed`, or `internal-error` on failure. Validation
-and handler exceptions map to `internal-error` except rejected input, which
-maps to `invalid-params`.
+Handlers return a promise of a semantic `Result`. Unknown handler failures
+become `command-failed`; explicit `invalid-params`, `forbidden`, and
+`internal-error` keep those sanitized categories. `errorMap` may map named
+application failures to a public `{ code, message }`; then the executor returns
+the mapped name and the dispatcher emits its public error. The map is checked
+at construction: names cannot shadow built-in failures, codes must be distinct
+integers from -32099 through -32002, and messages must be 1–120 printable ASCII
+characters. Unmapped failures never expose handler details. Handler exceptions
+and invalid successful output become `internal-error`; rejected input becomes
+`invalid-params`.
 
 `createDispatcher(options)` returns `dispatch(request, trustedContext)`, a
 promise of one JSON-RPC response. `request` may be a parsed value or a JSON
@@ -24,14 +29,16 @@ positional arrays, null/non-finite IDs, and extra envelope fields are rejected
 before execution. No authentication, exposure policy, HTTP handling, or Forge
 context is provided by this in-memory API.
 
-| Condition                                 |   Code | Message          | Response ID                         |
-| ----------------------------------------- | -----: | ---------------- | ----------------------------------- |
-| Malformed JSON string                     | -32700 | Parse error      | `null`                              |
-| Invalid envelope or unsupported form      | -32600 | Invalid request  | Valid supplied ID, otherwise `null` |
-| Unknown or incompletely configured method | -32601 | Method not found | Supplied ID                         |
-| Invalid named params                      | -32602 | Invalid params   | Supplied ID                         |
-| Handler's expected failure                | -32000 | Command failed   | Supplied ID                         |
-| Exception or invalid successful output    | -32603 | Internal error   | Supplied ID                         |
+| Condition                                 |             Code | Message          | Response ID                         |
+| ----------------------------------------- | ---------------: | ---------------- | ----------------------------------- |
+| Malformed JSON string                     |           -32700 | Parse error      | `null`                              |
+| Invalid envelope or unsupported form      |           -32600 | Invalid request  | Valid supplied ID, otherwise `null` |
+| Unknown or incompletely configured method |           -32601 | Method not found | Supplied ID                         |
+| Invalid named params                      |           -32602 | Invalid params   | Supplied ID                         |
+| Unmapped handler failure                  |           -32000 | Command failed   | Supplied ID                         |
+| Explicit handler denial                   |           -32001 | Forbidden        | Supplied ID                         |
+| Mapped application failure                | -32099 to -32002 | App-defined      | Supplied ID                         |
+| Exception or invalid successful output    |           -32603 | Internal error   | Supplied ID                         |
 
 Successful calls return `{ "jsonrpc": "2.0", "id": …, "result": … }`.
 Error calls return `{ "jsonrpc": "2.0", "id": …, "error": { "code": …,
@@ -122,7 +129,11 @@ binding. A webtrigger URL is not an authentication mechanism. Forge's dynamic we
 must pass its request and invocation context to the returned handler; no
 manifest or deployment is generated here.
 
-Ingress checks run in this order: POST only (405), well-formed array-valued
+An absent invocation context returns sanitized 503 before installation lookup,
+authentication, or dispatch. The installation resolver still owns the
+interpretation of a present trusted context.
+
+Ingress checks run in this order: absent context (503), POST only (405), well-formed array-valued
 headers and no duplicate `Content-Type` or `Authorization` values even across
 header casing (400), `application/json` optionally followed by
 `; charset=utf-8` (415), string body (400), at most 65,536 UTF-8 body bytes
