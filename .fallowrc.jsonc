@@ -3,5 +3,14 @@
   "ignoreDependencies": [
     // The changelog script calls `git cliff`, which Fallow does not associate with git-cliff.
     "git-cliff"
+  ],
+  "entry": [
+    // CLI scripts, typecheck-only fixtures, and the generated policy sample.
+    "examples/tracer/contract-types.ts",
+    "examples/tracer/generate.ts",
+    "examples/tracer/generated/web-policy.ts",
+    "scripts/generate-tracer.ts",
+    "scripts/declarations.mjs",
+    "tests/contract-types.ts"
   ]
 }
