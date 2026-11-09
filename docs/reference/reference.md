@@ -105,8 +105,10 @@ Import `createWebtrigger` from `forge-ahead-rpc/webtrigger` (the opt-in
 `{ kind: "forbidden" }`, or `{ kind: "unavailable" }`), and
 `context(installation, principal)` (the trusted handler context). Supply
 `selection` explicitly; no selection or missing configuration fails closed.
-For **internal-use installations only**, `createJiraAdminAuthenticator(requestJira)`
-provides the replaceable Jira-admin authenticator. `requestJira(url,
+For **internal-use installations only**, the [consumer fixture's Jira-admin
+authenticator](../../examples/tracer/jira-admin-authenticator.ts)
+provides a replaceable `createJiraAdminAuthenticator(requestJira)` example;
+it is **not exported by this package**. `requestJira(url,
 authorization)` is an app-supplied HTTPS Jira transport returning `{ status,
 body }`; it must send the Authorization header only to the supplied URL and
 must not log or retain it. The trusted installation supplies `jiraSiteUrl`

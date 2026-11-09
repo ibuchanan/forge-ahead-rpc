@@ -18,7 +18,7 @@ bun run typecheck
 bun test examples/tracer/dispatcher.test.ts
 ```
 
-The [consumer fixture](examples/tracer/DEVELOPMENT.md) shows the complete spec-edit, regeneration, drift-check, handler, dispatcher-test, and endpoint review workflow. Runtime exports are `forge-ahead-rpc` (`createDispatcher`, `createExecutor`, `createWebDispatcher`) and `forge-ahead-rpc/webtrigger` (`createWebtrigger`, the internal-use-only `createJiraAdminAuthenticator`). The separate `forge-ahead-rpc/generator` export is build-time tooling and must not be imported by deployed handlers.
+The [consumer fixture](examples/tracer/DEVELOPMENT.md) shows the complete spec-edit, regeneration, drift-check, handler, dispatcher-test, and endpoint review workflow. Runtime exports are `forge-ahead-rpc` (`createDispatcher`, `createExecutor`, `createWebDispatcher`) and `forge-ahead-rpc/webtrigger` (`createWebtrigger`). The internal-use-only Jira admin authenticator is [consumer fixture code](examples/tracer/jira-admin-authenticator.ts), not a package export. The separate `forge-ahead-rpc/generator` export is build-time tooling and must not be imported by deployed handlers.
 
 See the [OpenRPC profile](docs/reference/openrpc-profile.md) and [development guide](DEVELOPMENT.md). Local tests do not establish deployed Forge security or production readiness.
 

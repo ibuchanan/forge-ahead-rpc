@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 import { ok } from "@forge-ahead/errors";
-import {
-  createJiraAdminAuthenticator,
-  createWebtrigger,
-} from "../src/webtrigger";
+import { createWebtrigger } from "../src/webtrigger";
+import { createJiraAdminAuthenticator } from "../examples/tracer/jira-admin-authenticator";
 
 const body = (method = "write.one", params: unknown = {}) =>
   JSON.stringify({ jsonrpc: "2.0", id: 7, method, params });

@@ -6,7 +6,7 @@ import {
   createTestProfileSelection,
   createWebDispatcher,
 } from "../src/index";
-import { createJiraAdminAuthenticator } from "../src/webtrigger";
+import { createJiraAdminAuthenticator } from "../examples/tracer/jira-admin-authenticator";
 
 const catalog = {
   openrpc: "1.3.2",

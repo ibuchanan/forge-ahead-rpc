@@ -20,16 +20,16 @@ test("Node 22-targeted package resolves ESM and CommonJS entries", () => {
     [
       "run",
       "-e",
-      'import { createDispatcher } from "forge-ahead-rpc"; import { createWebtrigger } from "forge-ahead-rpc/webtrigger"; if (typeof createDispatcher !== "function" || typeof createWebtrigger !== "function") process.exit(1)',
+      'import { createDispatcher } from "forge-ahead-rpc"; import * as webtrigger from "forge-ahead-rpc/webtrigger"; if (typeof createDispatcher !== "function" || typeof webtrigger.createWebtrigger !== "function" || "createJiraAdminAuthenticator" in webtrigger) process.exit(1)',
     ],
     { encoding: "utf8" },
   );
   expect(esm.status).toBe(0);
   const cjs = require("forge-ahead-rpc");
   expect(typeof cjs.createDispatcher).toBe("function");
-  expect(typeof require("forge-ahead-rpc/webtrigger").createWebtrigger).toBe(
-    "function",
-  );
+  const webtrigger = require("forge-ahead-rpc/webtrigger");
+  expect(typeof webtrigger.createWebtrigger).toBe("function");
+  expect(webtrigger).not.toHaveProperty("createJiraAdminAuthenticator");
   expect(typeof require("forge-ahead-rpc/generator").generateContract).toBe(
     "function",
   );
