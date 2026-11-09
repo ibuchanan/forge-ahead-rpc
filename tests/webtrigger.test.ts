@@ -246,16 +246,14 @@ test("asUser uses Jira-verified identity and never falls back to asApp", async (
   let forgeCanAct = false;
   const asUserCatalog = {
     ...catalog,
-    methods: [
-      {
-        ...catalog.methods[0],
-        "x-forge-ahead": {
-          web: true,
-          execution: "asUser",
-          audit: "standard",
-        },
+    methods: catalog.methods.slice(0, 1).map((method) => ({
+      ...method,
+      "x-forge-ahead": {
+        web: true,
+        execution: "asUser",
+        audit: "standard",
       },
-    ],
+    })),
   };
   const handle = createWebtrigger({
     ...options,

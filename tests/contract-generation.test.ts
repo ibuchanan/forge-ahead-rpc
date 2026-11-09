@@ -9,7 +9,13 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { webDocument } from "../src/exposure";
 import { generateContract } from "../src/generator";
+import {
+  type OpenRpcDocument,
+  type OpenRpcSchema,
+  schemaKeywords,
+} from "../src/openrpc";
 
 const doc = {
   openrpc: "1.3.2",
@@ -47,6 +53,48 @@ const doc = {
     },
   ],
 };
+
+test("every generated schema keyword survives public discovery", () => {
+  const cases: Record<(typeof schemaKeywords)[number], OpenRpcSchema> = {
+    $ref: { $ref: "#/components/schemas/Label" },
+    type: { type: "boolean" },
+    properties: {
+      type: "object",
+      properties: { label: { type: "string" } },
+      additionalProperties: false,
+    },
+    required: {
+      type: "object",
+      properties: { label: { type: "string" } },
+      required: ["label"],
+      additionalProperties: false,
+    },
+    additionalProperties: { type: "object", additionalProperties: false },
+    const: { type: "string", const: "ready" },
+    enum: { type: "string", enum: ["ready", "done"] },
+    minLength: { type: "string", minLength: 1 },
+    maxLength: { type: "string", maxLength: 8 },
+  };
+  expect(Object.keys(cases).sort()).toEqual([...schemaKeywords].sort());
+  for (const schema of Object.values(cases)) {
+    const catalog: OpenRpcDocument = {
+      openrpc: "1.3.2",
+      info: { title: "Keywords", version: "1" },
+      components: { schemas: { Label: { type: "string" } } },
+      methods: [
+        {
+          name: "sample.read",
+          paramStructure: "by-name",
+          params: [],
+          result: { name: "value", schema },
+        },
+      ],
+    };
+    expect(() => generateContract(catalog, "fixture.json")).not.toThrow();
+    const published = webDocument(catalog, new Set(["sample.read"]));
+    expect(published.methods[0]?.result.schema).toEqual(schema);
+  }
+});
 
 test("CLI drift check compares without changing artifacts", () => {
   const dir = mkdtempSync("tmp_rovo_contract_");

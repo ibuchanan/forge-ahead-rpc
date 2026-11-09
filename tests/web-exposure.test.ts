@@ -196,7 +196,9 @@ test("reserved discovery name cannot become an application method", () => {
       ...options,
       catalog: {
         ...document,
-        methods: [{ ...document.methods[0], name: "rpc.discover" }],
+        methods: document.methods
+          .slice(0, 1)
+          .map((method) => ({ ...method, name: "rpc.discover" })),
       },
     }),
   ).toThrow(/reserved/);

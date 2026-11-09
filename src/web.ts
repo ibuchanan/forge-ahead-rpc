@@ -4,6 +4,7 @@ import { type Response, validateEnvelope } from "./envelope";
 import { type PublicError, resolveErrors } from "./errors";
 import type { Options } from "./executor";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
+import type { OpenRpcDocument } from "./openrpc";
 
 export type WebOptions<Context> = Options<Context> & {
   /** Generated reviewed maximum; must match the catalog before serving requests. */
@@ -11,12 +12,7 @@ export type WebOptions<Context> = Options<Context> & {
     string,
     { execution: Mode; audit: "standard" | "critical" }
   >;
-  catalog: {
-    openrpc: string;
-    info: Record<string, unknown>;
-    methods: Record<string, unknown>[];
-    components?: Record<string, unknown>;
-  };
+  catalog: OpenRpcDocument;
   /** Trusted installation selection; absence exposes no application method. */
   selection?: (context: Context) => Record<string, Mode>;
   /** App-owned authorization (not authentication); defaults to deny. */

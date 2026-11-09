@@ -1,19 +1,10 @@
 import Ajv from "ajv";
 import standaloneCode from "ajv/dist/standalone/index.js";
 import { methodMetadata } from "./exposure";
+import { schemaKeywords } from "./openrpc";
 
 type Obj = Record<string, unknown>;
-const schemaKeys = new Set([
-  "$ref",
-  "type",
-  "properties",
-  "required",
-  "additionalProperties",
-  "const",
-  "enum",
-  "minLength",
-  "maxLength",
-]);
+const schemaKeys = new Set<string>(schemaKeywords);
 const methodName = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
 const identifier = /^[A-Za-z_$][\w$]*$/;
 function fail(where: string, reason: string): never {
