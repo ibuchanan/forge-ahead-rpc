@@ -6,6 +6,9 @@
   "license": "Apache-2.0",
   "author": "ibuchanan",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "exports": {
     ".": {
       "import": {
