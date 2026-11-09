@@ -7,5 +7,8 @@
   "format": ["esm", "cjs"],
   "sourcemap": true,
   "target": "node22",
+  "deps": {
+    "onlyBundle": ["ajv", "fast-deep-equal", "json-schema-traverse", "fast-uri"]
+  },
   "define": { "__RPC_DEV_PROFILE__": "false" }
 }
