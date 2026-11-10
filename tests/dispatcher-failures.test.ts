@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { err, ok } from "@forge-ahead/errors";
+import { JSONRPCErrorException } from "json-rpc-2.0";
 import {
   createDispatcher,
   createExecutor,
@@ -90,6 +91,125 @@ test("unknown methods, invalid params, expected errors and exceptions are safe",
     failure(-32603, "Internal error", 4),
   );
   expect(writes).toEqual(["denied", "throw"]);
+});
+
+test("unexpected dispatch failures use the catalog internal error and emit a failed outcome silently", async () => {
+  const events: unknown[] = [];
+  const app = createDispatcher({
+    handlers: { read: async () => ok("unused") },
+    inputValidators: { read: () => true },
+    outputValidators: { read: () => true },
+    critical: () => {
+      throw new Error("private dispatch exception");
+    },
+    errorCatalog: {
+      "internal-error": { code: -32603, title: "Service unavailable" },
+    },
+  });
+  expect(
+    await app(
+      { jsonrpc: "2.0", id: "failed", method: "read", params: {} },
+      {},
+      {
+        emit: async (...event) => {
+          events.push(event);
+          return true;
+        },
+      },
+    ),
+  ).toEqual(failure(-32603, "Service unavailable", "failed"));
+  expect(events).toEqual([["outcome", "failed", "read"]]);
+});
+
+test("unexpected library exceptions cannot supply public codes, messages, or data", async () => {
+  const app = createDispatcher({
+    handlers: {},
+    inputValidators: {},
+    outputValidators: {},
+    critical: () => {
+      throw new JSONRPCErrorException("private policy exception", -32042, {
+        secret: "private data",
+      });
+    },
+  });
+  expect(
+    await app({ jsonrpc: "2.0", id: 1, method: "read", params: {} }, {}),
+  ).toEqual(failure(-32603, "Internal error", 1));
+});
+
+test("dispatch audits critical success, expected failure, thrown failure, and refused attempts", async () => {
+  const events: unknown[] = [];
+  const executed: string[] = [];
+  const app = createDispatcher({
+    handlers: {
+      write: async ({ value }: { value: string }) => {
+        executed.push(value);
+        if (value === "denied") return err("forbidden");
+        if (value === "throw") throw new Error("private handler exception");
+        return ok(value);
+      },
+    },
+    inputValidators: { write: () => true },
+    outputValidators: { write: () => true },
+    critical: () => true,
+  });
+  for (const [value, expected] of [
+    ["saved", { jsonrpc: "2.0", id: 0, result: "saved" }],
+    ["denied", failure(-32001, "Forbidden", 0)],
+    ["throw", failure(-32603, "Internal error", 0)],
+    ["blocked", failure(-32603, "Internal error", 0)],
+  ] as const) {
+    events.length = 0;
+    expect(
+      await app(
+        { jsonrpc: "2.0", id: 0, method: "write", params: { value } },
+        {},
+        {
+          emit: async (...event) => {
+            events.push(event);
+            return value !== "blocked";
+          },
+        },
+      ),
+    ).toEqual(expected);
+    expect(events).toEqual([
+      ["attempt", "started", "write"],
+      ["outcome", value === "saved" ? "succeeded" : "failed", "write"],
+    ]);
+  }
+  expect(
+    await app(
+      { jsonrpc: "2.0", id: 0, method: "write", params: { value: "no-audit" } },
+      {},
+    ),
+  ).toEqual(failure(-32603, "Internal error", 0));
+  expect(executed).toEqual(["saved", "denied", "throw"]);
+});
+
+test("library error handling is silent and never exposes unexpected error text", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(
+      await dispatch(
+        call("saved", "silent"),
+        {},
+        {
+          emit: async () => {
+            throw new Error("private audit exception");
+          },
+        },
+      ),
+    ).toEqual(failure(-32603, "Internal error", "silent"));
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+    log.mockRestore();
+    error.mockRestore();
+  }
 });
 
 test("library routing preserves null results and custom method-not-found titles", async () => {

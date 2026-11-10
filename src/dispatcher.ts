@@ -1,4 +1,8 @@
-import { createJSONRPCErrorResponse, JSONRPCServer } from "json-rpc-2.0";
+import {
+  JSONRPCErrorException,
+  type JSONRPCResponse,
+  JSONRPCServer,
+} from "json-rpc-2.0";
 import type { AuditPhase, AuditReason } from "./audit";
 import { type Response, validateEnvelope } from "./envelope";
 import { type PublicError, resolveErrors } from "./errors";
@@ -42,49 +46,69 @@ export function dispatcher<Context>(
   audit?: DispatchAudit,
 ) => Promise<Response> {
   const execute = executor(options, errors);
-  const server = new JSONRPCServer<Context>();
-  const error = (id: string | number, name: string): Response => {
+  const server = new JSONRPCServer<{
+    context: Context;
+    audit: DispatchAudit | undefined;
+  }>({ errorListener: () => {} });
+  const catalogErrors = new WeakSet<JSONRPCErrorException>();
+  const error = (name: string) => {
     const definition =
       errors.get(name) ?? requiredError(errors, "command-failed");
-    return createJSONRPCErrorResponse(id, definition.code, definition.message);
+    const exception = new JSONRPCErrorException(
+      definition.message,
+      definition.code,
+    );
+    catalogErrors.add(exception);
+    return exception;
   };
+  const mapError = server.mapErrorToJSONRPCErrorResponse;
+  server.mapErrorToJSONRPCErrorResponse = (id, thrown: unknown) =>
+    mapError(
+      id,
+      thrown instanceof JSONRPCErrorException && catalogErrors.has(thrown)
+        ? thrown
+        : error("internal-error"),
+    );
   for (const method of Object.keys(options.handlers)) {
-    server.addMethodAdvanced(method, async (request, context) => {
-      const outcome = await execute(method, request.params, context);
-      if (outcome.isOk())
-        return {
-          jsonrpc: "2.0",
-          id: request.id ?? null,
-          result: outcome.value,
-        };
-      return error(
-        request.id as string | number,
-        typeof outcome.error === "string" ? outcome.error : "internal-error",
-      );
+    server.addMethod(method, async (params, { context }) => {
+      const outcome = await execute(method, params, context);
+      if (outcome.isErr()) throw error(outcome.error);
+      return outcome.value;
     });
   }
-  server.handleMethodNotFound = async (request) =>
-    error(request.id as string | number, "method-not-found");
+  server.handleMethodNotFound = async () => {
+    throw error("method-not-found");
+  };
+  server.applyMiddleware(async (next, request, params) => {
+    const { audit } = params;
+    let response: JSONRPCResponse | null;
+    try {
+      if (options.critical?.(request.method)) {
+        if (!audit || !(await audit.emit("attempt", "started", request.method)))
+          throw error("internal-error");
+      }
+      response = await next(request, params);
+    } catch (thrown) {
+      response = server.mapErrorToJSONRPCErrorResponse(
+        request.id ?? null,
+        thrown,
+      );
+    }
+    await audit?.emit(
+      "outcome",
+      response?.error ? "failed" : "succeeded",
+      request.method,
+    );
+    return response;
+  });
 
   return async (request, context, audit) => {
     // The public subset is stricter than the library: no batches, notifications,
     // positional params, or unknown envelope fields.
     const validated = validateEnvelope(request, errors);
     if ("response" in validated) return validated.response;
-    const { method, id } = validated.request;
-    if (options.critical?.(method)) {
-      if (!audit || !(await audit.emit("attempt", "started", method)))
-        return error(id, "internal-error");
-    }
-    const response = await server.receive(validated.request, context);
-    // The strict envelope always has an id and cannot produce a batch.
-    if (!response || Array.isArray(response))
-      return error(id, "internal-error");
-    await audit?.emit(
-      "outcome",
-      "error" in response ? "failed" : "succeeded",
-      method,
-    );
-    return response as Response;
+    // A validated single call always has an id, so the library returns a response.
+    // biome-ignore lint/style/noNonNullAssertion: strict envelopes exclude notifications
+    return (await server.receive(validated.request, { context, audit }))!;
   };
 }
