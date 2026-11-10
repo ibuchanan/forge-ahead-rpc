@@ -114,6 +114,12 @@ test("CLI drift check compares without changing artifacts", () => {
       "web-policy.ts",
     ]);
     const before = readFileSync(join(out, "contract.ts"), "utf8");
+    const validators = readFileSync(join(out, "validators.js"), "utf8");
+    expect(
+      [...validators.matchAll(/export (?:const|function) (\w+)/g)].map(
+        (match) => match[1],
+      ),
+    ).toEqual(["inputValidators", "outputValidators"]);
     expect(run("check").status).toBe(0);
     writeFileSync(
       spec,

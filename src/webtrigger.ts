@@ -49,21 +49,22 @@ export function createWebtrigger<
   Principal,
 >(options: WebtriggerOptions<Context, ForgeContext, Installation, Principal>) {
   const web = createWebDispatcher(options, { requireAudit: true });
+  const auditPort = options.audit && { ...options.audit };
   if (
     Object.values(options.webPolicy).some(
       (policy) => policy.audit === "critical",
     ) &&
-    !options.audit
+    !auditPort
   )
     throw new Error("critical web methods require an audit publisher");
   if (
-    options.audit &&
-    (!options.audit.source ||
-      typeof options.audit.identity !== "function" ||
-      typeof options.audit.publish !== "function" ||
-      typeof options.audit.onFailure !== "function" ||
-      !Number.isFinite(options.audit.timeoutMs) ||
-      options.audit.timeoutMs <= 0)
+    auditPort &&
+    (!auditPort.source ||
+      typeof auditPort.identity !== "function" ||
+      typeof auditPort.publish !== "function" ||
+      typeof auditPort.onFailure !== "function" ||
+      !Number.isFinite(auditPort.timeoutMs) ||
+      auditPort.timeoutMs <= 0)
   )
     throw new Error("invalid audit configuration");
   const authenticate = async (
@@ -77,7 +78,7 @@ export function createWebtrigger<
     } catch {
       if (authorization) return 503;
       try {
-        options.audit?.onFailure("authentication");
+        auditPort?.onFailure("authentication");
       } catch {
         /* Preserve 401. */
       }
@@ -102,8 +103,8 @@ export function createWebtrigger<
     const principal =
       auth.kind === "authenticated" ? auth.principal : undefined;
     try {
-      if (options.audit)
-        await auditSession(options.audit, installation, principal).emit(
+      if (auditPort)
+        await auditSession(auditPort, installation, principal).emit(
           "authentication",
           outcome.reason,
         );
@@ -132,7 +133,7 @@ export function createWebtrigger<
       const context = options.context(installation, principal);
       if (context == null) return failure(503);
       const audit =
-        options.audit && auditSession(options.audit, installation, principal);
+        auditPort && auditSession(auditPort, installation, principal);
       return json(200, await web.dispatch(validated.body, context, audit));
     } catch {
       return failure(503);

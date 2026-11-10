@@ -83,8 +83,6 @@ export function auditSession<Installation, Principal>(
           ...(accountId ? { accountId } : {}),
           ...(method ? { method } : {}),
         });
-        if (!Number.isFinite(port.timeoutMs) || port.timeoutMs <= 0)
-          throw new Error("invalid audit timeout");
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
@@ -111,4 +109,3 @@ export function auditSession<Installation, Principal>(
     },
   };
 }
-export type AuditSession = ReturnType<typeof auditSession>;

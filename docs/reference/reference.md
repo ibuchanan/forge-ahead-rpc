@@ -3,6 +3,16 @@
 <!-- markdownlint-disable MD013 -->
 <!-- cspell:words mypermissions webtrigger specversion -->
 
+## Package exports
+
+| Entry point                  | Runtime exports                                                                                              | Type exports                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| `forge-ahead-rpc`            | `createDispatcher`, `createExecutor`, `createWebDispatcher`, `createTestProfileSelection`, `rpcErrorCatalog` | `DispatchAudit`, `OpenRpcDocument`, `WebOptions`               |
+| `forge-ahead-rpc/webtrigger` | `createWebtrigger`                                                                                           | `WebtriggerOptions`, `WebtriggerRequest`, `WebtriggerResponse` |
+| `forge-ahead-rpc/generator`  | `generateContract` (build-time only)                                                                         | None                                                           |
+
+Only these entry-point exports are supported; other source modules and generated fixture helpers are internal. The Jira-admin authenticator lives in the consumer fixture, not the package.
+
 `createExecutor(options)` returns `execute(method, params, trustedContext)`,
 a promise of `@forge-ahead/errors` `Result`. The caller supplies trusted
 context separately from untrusted params; request fields never become context.

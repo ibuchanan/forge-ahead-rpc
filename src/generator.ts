@@ -24,10 +24,12 @@ const identifier = /^[A-Za-z_$][\w$]*$/;
 
 function compileValidators(ajv: Ajv, exports: Record<string, string>): string {
   // Ajv emits a CommonJS helper for UTF-16 code-point length even with esm: true.
-  const code = standaloneCode(ajv, exports).replaceAll(
-    'require("ajv/dist/runtime/ucs2length").default',
-    "(str => Array.from(str).length)",
-  );
+  const code = standaloneCode(ajv, exports)
+    .replaceAll(
+      'require("ajv/dist/runtime/ucs2length").default',
+      "(str => Array.from(str).length)",
+    )
+    .replace(/\bexport const ((?:input|output)\d+) =/g, "const $1 =");
   if (code.includes("require("))
     fail("validators", "unsupported Ajv runtime helper in ESM output");
   return code;

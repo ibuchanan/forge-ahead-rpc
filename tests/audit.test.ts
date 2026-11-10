@@ -271,6 +271,17 @@ test("critical configuration requires a publisher before serving", () => {
   ).toThrow(/audit configuration/);
 });
 
+test("audit timeout is captured after construction validation", async () => {
+  const audit = { ...options.audit, timeoutMs: 100 };
+  const handler = createWebtrigger({ ...options, audit });
+  audit.timeoutMs = 0;
+  calls.length = 0;
+  const response = await handler(request, trusted);
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).result).toBe("saved");
+  expect(calls).not.toContain("failure");
+});
+
 test("critical writes await an acknowledged attempt and publish their outcome without secrets", async () => {
   events.length = 0;
   calls.length = 0;
