@@ -368,6 +368,33 @@ test("authenticated POST returns a Forge JSON response with trusted context", as
   });
 });
 
+test("malformed JSON is authenticated before returning a JSON-RPC parse error", async () => {
+  let authenticationCalls = 0;
+  const handle = createWebtrigger({
+    ...options,
+    authenticate: async () => {
+      authenticationCalls++;
+      return options.authenticate();
+    },
+  });
+  const denied = await handle(
+    request({ body: "{", headers: { "Content-Type": ["application/json"] } }),
+    forgeContext,
+  );
+  expect(denied.statusCode).toBe(401);
+  expect(denied.body).toBe('{"error":"Request rejected"}');
+  expect(authenticationCalls).toBe(0);
+
+  const authenticated = await handle(request({ body: "{" }), forgeContext);
+  expect(authenticationCalls).toBe(1);
+  expect(authenticated.statusCode).toBe(200);
+  expect(JSON.parse(authenticated.body)).toEqual({
+    jsonrpc: "2.0",
+    id: null,
+    error: { code: -32700, message: "Parse error" },
+  });
+});
+
 test("ingress rejects before dispatch with stable precedence and no secret leakage", async () => {
   calls.length = 0;
   const handle = createWebtrigger(options);
