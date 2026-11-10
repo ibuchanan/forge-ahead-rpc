@@ -19,9 +19,22 @@ npm run test
 
 ## Coverage-backed complexity checks
 
-Run `bun run test:coverage` to generate Bun's text and LCOV reports, plus
-`coverage/coverage-final.json` for Fallow. Run `bun run lint:check:fallow` to
-regenerate coverage and then check dead code, duplication, and complexity.
+Run `bun run check` for the ordered verification workflow: build production and
+development artifacts, run coverage-backed lint, then check the existing package.
+Builds finish before any tests consume `dist/`, and the test suite runs once.
+
+Run `bun run lint` to collect coverage, convert it, and then run independent
+analysis tasks in parallel. It requires existing build artifacts. Leaf commands
+do not rebuild or run prerequisite tasks:
+
+- `bun run test:coverage`: run tests and emit text and LCOV coverage.
+- `bun run coverage:convert`: convert existing LCOV to `coverage/coverage-final.json`.
+- `bun run lint:check:fallow`: analyze using existing converted coverage.
+- `bun run pack:check`: validate the existing build without rebuilding it.
+- `bun run test:profiles`: test existing production and development builds.
+
+`release:check` delegates to `check`. The `prepare` lifecycle hook still builds
+before installing Git hooks.
 Coverage artifacts are Git-ignored; do not commit them. Repository helpers in
 `scripts/` are excluded from Fallow analysis and Bun coverage; they do not have
 a dedicated test suite.

@@ -4,4 +4,4 @@ set -eu
 tsdown --no-dts
 tsc -p tsconfig.declarations.json
 
-node scripts/declarations.mjs
+bun run scripts/declarations.mjs

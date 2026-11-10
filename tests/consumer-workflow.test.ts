@@ -4,13 +4,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const fixture = "examples/tracer";
-const run = (mode: string) =>
-  spawnSync("bun", ["run", join(fixture, "generate.ts"), mode], {
+const run = (mode: string) => {
+  const result = spawnSync("bun", ["run", join(fixture, "generate.ts"), mode], {
     encoding: "utf8",
   });
+  expect(result.status, result.stderr || result.error?.message).toBe(0);
+  return result;
+};
 
 test("consumer generator has a read-only drift check and deterministic artifacts", () => {
-  expect(run("check").status).toBe(0);
+  run("check");
   const files = [
     "contract.ts",
     "validators.js",
@@ -20,11 +23,11 @@ test("consumer generator has a read-only drift check and deterministic artifacts
   const before = files.map((name) =>
     readFileSync(join(fixture, "generated", name), "utf8"),
   );
-  expect(run("generate").status).toBe(0);
+  run("generate");
   expect(
     files.map((name) => readFileSync(join(fixture, "generated", name), "utf8")),
   ).toEqual(before);
-  expect(run("check").status).toBe(0);
+  run("check");
 });
 
 test("packed runtime entry points do not import the Ajv generator", () => {
