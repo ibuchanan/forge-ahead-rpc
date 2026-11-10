@@ -1,3 +1,42 @@
+const unauthorized = { kind: "unauthorized" as const };
+const unavailable = { kind: "unavailable" as const };
+
+function validBasicAuthorization(authorization: string): boolean {
+  if (!/^Basic [A-Za-z0-9+/]+={0,2}$/.test(authorization)) return false;
+  const encoded = authorization.slice(6);
+  const decoded = Buffer.from(encoded, "base64");
+  if (decoded.toString("base64") !== encoded) return false;
+  const credentials = decoded.toString("utf8");
+  return (
+    Buffer.from(credentials, "utf8").compare(decoded) === 0 &&
+    /^[^\s:@]+@[^\s:@]+\.[^\s:@]+:[^\r\n]+(?![\s\S])/.test(credentials)
+  );
+}
+
+function trustedSiteOrigin(jiraSiteUrl: string): string | undefined {
+  const site = new URL(jiraSiteUrl);
+  if (
+    site.protocol !== "https:" ||
+    !site.hostname ||
+    site.username ||
+    site.password ||
+    site.port ||
+    site.pathname !== "/" ||
+    site.search ||
+    site.hash
+  )
+    return undefined;
+  return site.origin;
+}
+
+function requestStatus(
+  status: number,
+): "unauthorized" | "unavailable" | undefined {
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status !== 200) return "unavailable";
+  return undefined;
+}
+
 /** Internal-use Jira admin verifier. The caller provides a Jira HTTP port; do not use for distributable apps. */
 export function createJiraAdminAuthenticator(
   requestJira: (
@@ -9,60 +48,36 @@ export function createJiraAdminAuthenticator(
     authorization: string,
     installation: { jiraSiteUrl: string },
   ) => {
-    if (!/^Basic [A-Za-z0-9+/]+={0,2}$/.test(authorization))
-      return { kind: "unauthorized" as const };
-    const decoded = Buffer.from(authorization.slice(6), "base64");
-    if (decoded.toString("base64") !== authorization.slice(6))
-      return { kind: "unauthorized" as const };
-    const credentials = decoded.toString("utf8");
-    if (
-      Buffer.from(credentials, "utf8").compare(decoded) !== 0 ||
-      !/^[^\s:@]+@[^\s:@]+\.[^\s:@]+:[^\r\n]+(?![\s\S])/.test(credentials)
-    )
-      return { kind: "unauthorized" as const };
+    if (!validBasicAuthorization(authorization)) return unauthorized;
     try {
-      const site = new URL(installation.jiraSiteUrl);
-      if (
-        site.protocol !== "https:" ||
-        !site.hostname ||
-        site.username ||
-        site.password ||
-        site.port ||
-        site.pathname !== "/" ||
-        site.search ||
-        site.hash
-      )
-        return { kind: "unavailable" as const };
+      const origin = trustedSiteOrigin(installation.jiraSiteUrl);
+      if (!origin) return unavailable;
       const myself = await requestJira(
-        `${site.origin}/rest/api/3/myself`,
+        `${origin}/rest/api/3/myself`,
         authorization,
       );
-      if (myself.status === 401 || myself.status === 403)
-        return { kind: "unauthorized" as const };
-      if (myself.status !== 200) return { kind: "unavailable" as const };
+      const myselfFailure = requestStatus(myself.status);
+      if (myselfFailure) return { kind: myselfFailure };
       const accountId = (myself.body as { accountId?: unknown } | null)
         ?.accountId;
-      if (typeof accountId !== "string" || !accountId)
-        return { kind: "unavailable" as const };
+      if (typeof accountId !== "string" || !accountId) return unavailable;
       const permissions = await requestJira(
-        `${site.origin}/rest/api/3/mypermissions?permissions=ADMINISTER`,
+        `${origin}/rest/api/3/mypermissions?permissions=ADMINISTER`,
         authorization,
       );
-      if (permissions.status === 401 || permissions.status === 403)
-        return { kind: "unauthorized" as const };
-      if (permissions.status !== 200) return { kind: "unavailable" as const };
+      const permissionsFailure = requestStatus(permissions.status);
+      if (permissionsFailure) return { kind: permissionsFailure };
       const admin = (
         permissions.body as {
           permissions?: { ADMINISTER?: { havePermission?: unknown } };
         } | null
       )?.permissions?.ADMINISTER?.havePermission;
-      if (admin !== true && admin !== false)
-        return { kind: "unavailable" as const };
+      if (admin !== true && admin !== false) return unavailable;
       return admin
         ? { kind: "authenticated" as const, principal: { accountId } }
         : { kind: "forbidden" as const };
     } catch {
-      return { kind: "unavailable" as const };
+      return unavailable;
     }
   };
 }

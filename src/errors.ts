@@ -25,6 +25,20 @@ const validTitle = (title: unknown): title is string =>
   typeof title === "string" && /^[\x20-\x7e]{1,120}$/.test(title);
 export type PublicError = { code: number; message: string };
 
+function validApplicationCode(
+  code: unknown,
+  standard: PublicError | undefined,
+  usedCodes: ReadonlySet<number>,
+): code is number {
+  if (!Number.isInteger(code)) return false;
+  if (standard) return code === standard.code;
+  return (
+    (code as number) >= -32099 &&
+    (code as number) <= -32002 &&
+    !usedCodes.has(code as number)
+  );
+}
+
 export function resolveErrors(
   definitions: Record<string, CatalogProblemDefinition> = {},
 ) {
@@ -42,15 +56,11 @@ export function resolveErrors(
     if (
       !entry ||
       !validTitle(entry.title) ||
-      !Number.isInteger(code) ||
-      (standard
-        ? code !== standard.code
-        : (code ?? 0) < -32099 || (code ?? 0) > -32002) ||
-      (!standard && codes.has(code as number))
+      !validApplicationCode(code, standard, codes)
     )
       throw new Error("invalid application error mapping");
-    errors.set(name, { code: code as number, message: entry.title });
-    if (!standard) codes.add(code as number);
+    errors.set(name, { code, message: entry.title });
+    if (!standard) codes.add(code);
   }
   return errors;
 }

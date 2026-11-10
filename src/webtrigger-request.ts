@@ -10,31 +10,47 @@ const containsCredentials = (value: unknown): boolean => {
   );
 };
 
+function validHeaders(headers: WebtriggerRequest["headers"]): boolean {
+  if (headers === undefined) return true;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers))
+    return false;
+  return Object.values(headers).every(
+    (values) =>
+      Array.isArray(values) &&
+      values.every((value) => typeof value === "string"),
+  );
+}
+
+function headerValues(entries: [string, string[]][], name: string): string[] {
+  return entries
+    .filter(([key]) => key.toLowerCase() === name)
+    .flatMap(([, values]) => values);
+}
+
+function hasCredentialParams(body: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    // Preserve the dispatcher's JSON-RPC parse error after authentication.
+    return false;
+  }
+  return (
+    parsed !== null &&
+    typeof parsed === "object" &&
+    "params" in parsed &&
+    containsCredentials(parsed.params)
+  );
+}
+
 /** Validate untrusted HTTP input before authentication; JSON-RPC parsing stays in dispatch. */
 export function validateWebtriggerRequest(
   request: WebtriggerRequest,
 ): { authorization: string | undefined; body: string } | number {
   if (request.method !== "POST") return 405;
-  if (
-    request.headers !== undefined &&
-    (!request.headers ||
-      typeof request.headers !== "object" ||
-      Array.isArray(request.headers))
-  )
-    return 400;
+  if (!validHeaders(request.headers)) return 400;
   const headerEntries = Object.entries(request.headers ?? {});
-  if (
-    headerEntries.some(
-      ([, values]) =>
-        !Array.isArray(values) ||
-        values.some((value) => typeof value !== "string"),
-    )
-  )
-    return 400;
-  const headers = (name: string) =>
-    headerEntries
-      .filter(([key]) => key.toLowerCase() === name)
-      .flatMap(([, values]) => values);
+  const headers = (name: string) => headerValues(headerEntries, name);
   const contentTypes = headers("content-type");
   const authorizations = headers("authorization");
   if (contentTypes.length > 1 || authorizations.length > 1) return 400;
@@ -46,20 +62,8 @@ export function validateWebtriggerRequest(
   if (Buffer.byteLength(request.body, "utf8") > 65_536) return 413;
   if (request.queryParameters && Object.keys(request.queryParameters).length)
     return 400;
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(request.body);
-  } catch {
-    // Preserve the dispatcher's JSON-RPC parse error after authentication.
-  }
-  try {
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      "params" in parsed &&
-      containsCredentials(parsed.params)
-    )
-      return 400;
+    if (hasCredentialParams(request.body)) return 400;
   } catch {
     return 400;
   }

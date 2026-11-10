@@ -1,3 +1,4 @@
+import { createJSONRPCErrorResponse, JSONRPCServer } from "json-rpc-2.0";
 import type { AuditPhase, AuditReason } from "./audit";
 import { type Response, validateEnvelope } from "./envelope";
 import { type PublicError, resolveErrors } from "./errors";
@@ -41,28 +42,49 @@ export function dispatcher<Context>(
   audit?: DispatchAudit,
 ) => Promise<Response> {
   const execute = executor(options, errors);
+  const server = new JSONRPCServer<Context>();
+  const error = (id: string | number, name: string): Response => {
+    const definition =
+      errors.get(name) ?? requiredError(errors, "command-failed");
+    return createJSONRPCErrorResponse(id, definition.code, definition.message);
+  };
+  for (const method of Object.keys(options.handlers)) {
+    server.addMethodAdvanced(method, async (request, context) => {
+      const outcome = await execute(method, request.params, context);
+      if (outcome.isOk())
+        return {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: outcome.value,
+        };
+      return error(
+        request.id as string | number,
+        typeof outcome.error === "string" ? outcome.error : "internal-error",
+      );
+    });
+  }
+  server.handleMethodNotFound = async (request) =>
+    error(request.id as string | number, "method-not-found");
+
   return async (request, context, audit) => {
+    // The public subset is stricter than the library: no batches, notifications,
+    // positional params, or unknown envelope fields.
     const validated = validateEnvelope(request, errors);
     if ("response" in validated) return validated.response;
-    const { method, params, id } = validated.request;
-    const error = (name: string): Response => ({
-      jsonrpc: "2.0",
-      id,
-      error: errors.get(name) ?? requiredError(errors, "command-failed"),
-    });
+    const { method, id } = validated.request;
     if (options.critical?.(method)) {
       if (!audit || !(await audit.emit("attempt", "started", method)))
-        return error("internal-error");
+        return error(id, "internal-error");
     }
-    const outcome = await execute(method, params, context);
+    const response = await server.receive(validated.request, context);
+    // The strict envelope always has an id and cannot produce a batch.
+    if (!response || Array.isArray(response))
+      return error(id, "internal-error");
     await audit?.emit(
       "outcome",
-      outcome.isOk() ? "succeeded" : "failed",
+      "error" in response ? "failed" : "succeeded",
       method,
     );
-    if (outcome.isOk()) return { jsonrpc: "2.0", id, result: outcome.value };
-    return error(
-      typeof outcome.error === "string" ? outcome.error : "internal-error",
-    );
+    return response as Response;
   };
 }

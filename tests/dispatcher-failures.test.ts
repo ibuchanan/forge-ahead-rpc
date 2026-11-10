@@ -92,6 +92,23 @@ test("unknown methods, invalid params, expected errors and exceptions are safe",
   expect(writes).toEqual(["denied", "throw"]);
 });
 
+test("library routing preserves null results and custom method-not-found titles", async () => {
+  const app = createDispatcher({
+    handlers: { "read.null": async () => ok(null) },
+    inputValidators: { "read.null": () => true },
+    outputValidators: { "read.null": (value) => value === null },
+    errorCatalog: {
+      "method-not-found": { code: -32601, title: "Not available" },
+    },
+  });
+  expect(
+    await app({ jsonrpc: "2.0", method: "read.null", params: {}, id: 0 }, {}),
+  ).toEqual({ jsonrpc: "2.0", id: 0, result: null });
+  expect(
+    await app({ jsonrpc: "2.0", method: "not-found", params: {}, id: 0 }, {}),
+  ).toEqual(failure(-32601, "Not available", 0));
+});
+
 test("a declared application failure keeps its sanitized code while undeclared failures stay generic", async () => {
   const app = createDispatcher({
     handlers: {

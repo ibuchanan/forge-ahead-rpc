@@ -89,7 +89,8 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "@forge-ahead/errors": "github:ibuchanan/forge-ahead-errors#a1dc9a41aa0d57830f5158ad6564e9984dc73390"
+    "@forge-ahead/errors": "github:ibuchanan/forge-ahead-errors#a1dc9a41aa0d57830f5158ad6564e9984dc73390",
+    "json-rpc-2.0": "1.8.1"
   },
   "trustedDependencies": [
     "@forge-ahead/errors"
