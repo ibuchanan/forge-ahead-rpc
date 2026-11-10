@@ -1,5 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": ["scripts/**"],
+  // Shell syntax misidentified as executable names in package.json scripts.
+  "ignoreBinaries": ["if", "then", "elif", "fi", "(lefthook", "true)"],
+  "health": {
+    "coverage": "coverage/coverage-final.json",
+    "maxCognitive": 20,
+    // Generated Ajv code remains subject to dead-code and duplication checks.
+    "ignore": ["examples/tracer/generated/validators.js"]
+  },
   "ignoreDependencies": [
     // The changelog script calls `git cliff`, which Fallow does not associate with git-cliff.
     "git-cliff",
@@ -14,8 +23,6 @@
     "examples/tracer/contract-types.ts",
     "examples/tracer/generate.ts",
     "examples/tracer/generated/web-policy.ts",
-    "scripts/generate-tracer.ts",
-    "scripts/declarations.mjs",
     "tests/contract-types.ts"
   ]
 }

@@ -4,6 +4,7 @@
 <!-- cspell:words openrpc webtrigger -->
 
 The generator supports OpenRPC `1.3.2` and JSON Schema draft-07 semantics (Ajv 8 default). It is a bounded subset, not general OpenRPC or JSON Schema support.
+
 - `methods`: a nonempty array with unique simple or dotted JavaScript-identifier segments (`name`), `paramStructure: "by-name"`, `params` array (empty is valid), and `result.schema`. `rpc.discover` is reserved. Each param has a unique identifier `name`, optional boolean `required`, and a `schema`. Named params form a closed object; extra fields fail validation.
 - Optional reviewed method extension `x-forge-ahead`: `{ "web": true, "execution": "asApp" | "asUser", "audit": "standard" | "critical" }`. Web eligibility defaults to false when omitted; web-eligible methods require both execution mode and minimum audit criticality. Invalid values and unknown extension keys fail generation. This metadata sets a maximum, not installation exposure or permission. The in-memory web dispatcher does not authenticate or publish audit events; the webtrigger adapter requires app-provided authentication, selection, authorization, and an acknowledged audit publisher for critical methods.
 - `components.schemas`: optional local named schemas. `$ref` alone may refer to `#/components/schemas/Name`. Missing, external, circular, or combined references fail generation. Unused components are also checked.
