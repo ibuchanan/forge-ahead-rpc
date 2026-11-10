@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ok } from "@forge-ahead/errors";
+import { err, ok } from "@forge-ahead/errors";
 import { auditEvent } from "../src/audit";
 import { createWebtrigger } from "../src/webtrigger";
 
@@ -261,6 +261,55 @@ test("failed critical acknowledgement blocks execution and reports operator fail
     message: "Internal error",
   });
   expect(calls).toEqual(["failure"]);
+});
+
+test("webtrigger preserves safe responses and one audit outcome for handler success, failure, and throw", async () => {
+  for (const scenario of ["success", "failure", "throw"] as const) {
+    const published: { type: string; data: { reason: string } }[] = [];
+    const handle = createWebtrigger({
+      ...options,
+      handlers: {
+        "write.one": async () => {
+          if (scenario === "throw")
+            throw new Error("private handler exception");
+          return scenario === "failure" ? err("forbidden") : ok("saved");
+        },
+      },
+      audit: {
+        ...options.audit,
+        publish: async (event) => {
+          published.push(event);
+        },
+      },
+    });
+    const response = await handle(request, trusted);
+    expect(response).toEqual({
+      statusCode: 200,
+      headers: { "Content-Type": ["application/json; charset=utf-8"] },
+      body: JSON.stringify(
+        scenario === "success"
+          ? { jsonrpc: "2.0", id: 7, result: "saved" }
+          : {
+              jsonrpc: "2.0",
+              id: 7,
+              error:
+                scenario === "failure"
+                  ? { code: -32001, message: "Forbidden" }
+                  : { code: -32603, message: "Internal error" },
+            },
+      ),
+    });
+    expect(published.map((event) => [event.type, event.data.reason])).toEqual([
+      ["com.forge-ahead.rpc.authentication", "authenticated"],
+      ["com.forge-ahead.rpc.authorization", "allowed"],
+      ["com.forge-ahead.rpc.attempt", "started"],
+      [
+        "com.forge-ahead.rpc.outcome",
+        scenario === "success" ? "succeeded" : "failed",
+      ],
+    ]);
+    expect(JSON.stringify(published)).not.toMatch(/secret|private|Basic/);
+  }
 });
 
 test("critical configuration requires a publisher before serving", () => {
