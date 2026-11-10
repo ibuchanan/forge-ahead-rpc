@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -97,7 +98,8 @@ test("every generated schema keyword survives public discovery", () => {
 });
 
 test("CLI drift check compares without changing artifacts", () => {
-  const dir = mkdtempSync("tmp_rovo_contract_");
+  mkdirSync(".scratch", { recursive: true });
+  const dir = mkdtempSync(join(".scratch", "tmp_rovo_contract_"));
   try {
     const spec = join(dir, "openrpc.json");
     const out = join(dir, "generated");
