@@ -30,13 +30,9 @@ function validApplicationCode(
   standard: PublicError | undefined,
   usedCodes: ReadonlySet<number>,
 ): code is number {
-  if (!Number.isInteger(code)) return false;
+  if (typeof code !== "number" || !Number.isInteger(code)) return false;
   if (standard) return code === standard.code;
-  return (
-    (code as number) >= -32099 &&
-    (code as number) <= -32002 &&
-    !usedCodes.has(code as number)
-  );
+  return code >= -32099 && code <= -32002 && !usedCodes.has(code);
 }
 
 export function resolveErrors(
