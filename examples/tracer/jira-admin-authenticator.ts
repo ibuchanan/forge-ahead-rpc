@@ -29,11 +29,9 @@ function trustedSiteOrigin(jiraSiteUrl: string): string | undefined {
   return site.origin;
 }
 
-function requestStatus(
-  status: number,
-): "unauthorized" | "unavailable" | undefined {
-  if (status === 401 || status === 403) return "unauthorized";
-  if (status !== 200) return "unavailable";
+function requestFailure(status: number) {
+  if (status === 401 || status === 403) return unauthorized;
+  if (status !== 200) return unavailable;
   return undefined;
 }
 
@@ -56,8 +54,8 @@ export function createJiraAdminAuthenticator(
         `${origin}/rest/api/3/myself`,
         authorization,
       );
-      const myselfFailure = requestStatus(myself.status);
-      if (myselfFailure) return { kind: myselfFailure };
+      const myselfFailure = requestFailure(myself.status);
+      if (myselfFailure) return myselfFailure;
       const accountId = (myself.body as { accountId?: unknown } | null)
         ?.accountId;
       if (typeof accountId !== "string" || !accountId) return unavailable;
@@ -65,8 +63,8 @@ export function createJiraAdminAuthenticator(
         `${origin}/rest/api/3/mypermissions?permissions=ADMINISTER`,
         authorization,
       );
-      const permissionsFailure = requestStatus(permissions.status);
-      if (permissionsFailure) return { kind: permissionsFailure };
+      const permissionsFailure = requestFailure(permissions.status);
+      if (permissionsFailure) return permissionsFailure;
       const admin = (
         permissions.body as {
           permissions?: { ADMINISTER?: { havePermission?: unknown } };

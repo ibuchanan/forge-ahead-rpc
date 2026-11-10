@@ -223,6 +223,42 @@ test("Jira admin verifier distinguishes bad credentials, non-admin, and unavaila
   expect(calls).toEqual([]);
 });
 
+test("Jira admin verifier maps non-200 responses at either endpoint before reading their bodies", async () => {
+  const authorization = `Basic ${Buffer.from("claim@example.test:api-token").toString("base64")}`;
+  const installation = { jiraSiteUrl: "https://trusted.atlassian.net" };
+  for (const endpoint of ["myself", "mypermissions"]) {
+    for (const [status, kind] of [
+      [201, "unavailable"],
+      [204, "unavailable"],
+      [302, "unavailable"],
+      [400, "unavailable"],
+      [401, "unauthorized"],
+      [403, "unauthorized"],
+      [429, "unavailable"],
+      [500, "unavailable"],
+      [503, "unavailable"],
+    ] as const) {
+      const requests: string[] = [];
+      const authenticate = createJiraAdminAuthenticator(async (url) => {
+        requests.push(url);
+        if (url.includes(`/rest/api/3/${endpoint}`)) {
+          return { status, body: null };
+        }
+        return { status: 200, body: { accountId: "verified" } };
+      });
+      expect(await authenticate(authorization, installation)).toEqual({ kind });
+      expect(requests).toEqual(
+        endpoint === "myself"
+          ? ["https://trusted.atlassian.net/rest/api/3/myself"]
+          : [
+              "https://trusted.atlassian.net/rest/api/3/myself",
+              "https://trusted.atlassian.net/rest/api/3/mypermissions?permissions=ADMINISTER",
+            ],
+      );
+    }
+  }
+});
+
 test("credential-bearing query or params are rejected before authentication and dispatch", async () => {
   calls.length = 0;
   let verified = 0;
