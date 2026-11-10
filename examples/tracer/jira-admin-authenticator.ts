@@ -15,13 +15,9 @@ export function createJiraAdminAuthenticator(
     if (decoded.toString("base64") !== authorization.slice(6))
       return { kind: "unauthorized" as const };
     const credentials = decoded.toString("utf8");
-    const separator = credentials.indexOf(":");
     if (
       Buffer.from(credentials, "utf8").compare(decoded) !== 0 ||
-      separator < 1 ||
-      separator === credentials.length - 1 ||
-      !/^[^\s:@]+@[^\s:@]+\.[^\s:@]+$/.test(credentials.slice(0, separator)) ||
-      /[\r\n]/.test(credentials)
+      !/^[^\s:@]+@[^\s:@]+\.[^\s:@]+:[^\r\n]+(?![\s\S])/.test(credentials)
     )
       return { kind: "unauthorized" as const };
     try {

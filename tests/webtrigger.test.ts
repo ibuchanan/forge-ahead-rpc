@@ -160,6 +160,18 @@ test("Jira admin verifier distinguishes bad credentials, non-admin, and unavaila
     "Basic ???",
     "Basic Zm9v",
     `Basic ${Buffer.from("not-email:token").toString("base64")}`,
+    ...[
+      ":token",
+      "claim@example.test:",
+      "claim@example.test:token\n",
+      "claim@example.test:token\r",
+      "claim@example.test:to\nken",
+      "claim@example.test:to\rken",
+      "claim:extra@example.test:token",
+      "claim@exam ple.test:token",
+    ].map(
+      (credentials) => `Basic ${Buffer.from(credentials).toString("base64")}`,
+    ),
   ]) {
     let called = false;
     const result = await invoke(malformed, async () => {

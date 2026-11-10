@@ -90,6 +90,8 @@ test("generation rejects invalid reviewed web metadata", () => {
   expect(() => generateContract(document, "fixture.json")).not.toThrow();
   for (const metadata of [
     { web: true },
+    { web: true, execution: undefined, audit: "standard" },
+    { web: true, execution: "asApp", audit: undefined },
     { web: "true", execution: "asApp", audit: "standard" },
     { web: true, execution: "asAdmin", audit: "standard" },
     { web: true, execution: "asUser", audit: "low" },

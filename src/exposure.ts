@@ -10,6 +10,13 @@ export type Metadata = {
   execution?: Mode;
   audit?: "standard" | "critical";
 };
+const metadataFields: Record<keyof Metadata, (value: unknown) => boolean> = {
+  web: (value) => value === undefined || typeof value === "boolean",
+  execution: (value) =>
+    value === undefined || value === "asApp" || value === "asUser",
+  audit: (value) =>
+    value === undefined || value === "standard" || value === "critical",
+};
 /** Reject malformed reviewed method policy rather than weakening it silently. */
 export function methodMetadata(method: {
   name?: unknown;
@@ -23,30 +30,14 @@ export function methodMetadata(method: {
     );
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) invalid();
-  if (
-    Object.keys(value).some(
-      (key) => !["web", "execution", "audit"].includes(key),
-    ) ||
-    ("web" in value &&
-      value.web !== undefined &&
-      typeof value.web !== "boolean") ||
-    ("execution" in value &&
-      value.execution !== undefined &&
-      value.execution !== "asApp" &&
-      value.execution !== "asUser") ||
-    ("audit" in value &&
-      value.audit !== undefined &&
-      value.audit !== "standard" &&
-      value.audit !== "critical") ||
-    ("web" in value &&
-      value.web === true &&
-      (!("execution" in value) ||
-        !value.execution ||
-        !("audit" in value) ||
-        !value.audit))
-  )
+  if (Object.keys(value).some((key) => !Object.hasOwn(metadataFields, key)))
     invalid();
-  return value;
+  const metadata = value as Record<keyof Metadata, unknown>;
+  for (const [key, accepts] of Object.entries(metadataFields))
+    if (key in value && !accepts(metadata[key as keyof Metadata])) invalid();
+  if (metadata.web === true && (!metadata.execution || !metadata.audit))
+    invalid();
+  return value as Metadata;
 }
 
 /** Project selected methods and transitively referenced schemas; strip private metadata. */
