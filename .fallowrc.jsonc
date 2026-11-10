@@ -2,7 +2,12 @@
   "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
   "ignoreDependencies": [
     // The changelog script calls `git cliff`, which Fallow does not associate with git-cliff.
-    "git-cliff"
+    "git-cliff",
+    // pack-check.sh calls these binaries; Fallow does not trace shell-script commands.
+    "@arethetypeswrong/cli",
+    "publint",
+    // tsdown bundles Ajv into the build-time generator; deployed runtime entries do not import it.
+    "ajv"
   ],
   "entry": [
     // CLI scripts, typecheck-only fixtures, and the generated policy sample.
