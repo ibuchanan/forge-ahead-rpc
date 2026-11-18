@@ -23,6 +23,21 @@ export type OpenRpcSchema = {
   maxLength?: number;
 };
 
+/** Static JSON metadata; not a JSON Schema or executable error definition. */
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type OpenRpcError = {
+  code: number;
+  message: string;
+  data?: JsonValue;
+};
+
 export type OpenRpcMethod = {
   name: string;
   summary?: string;
@@ -30,6 +45,8 @@ export type OpenRpcMethod = {
   paramStructure?: string;
   params: { name: string; required?: boolean; schema: OpenRpcSchema }[];
   result: { name: string; schema: OpenRpcSchema };
+  errors?: OpenRpcError[];
+  "x-retryable-errors"?: number[];
   "x-forge-ahead"?: unknown;
 };
 

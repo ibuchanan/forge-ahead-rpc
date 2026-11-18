@@ -1,6 +1,7 @@
 import type { DispatchAudit } from "./dispatcher";
 import { dispatcher } from "./dispatcher";
 import { type Response, validateEnvelope } from "./envelope";
+import { validateErrorMetadata } from "./error-metadata";
 import { type PublicError, resolveErrors } from "./errors";
 import type { Options } from "./executor";
 import { type Mode, methodMetadata, webDocument } from "./exposure";
@@ -52,6 +53,7 @@ export function createWebDispatcher<Context>(
   for (const method of options.catalog.methods) {
     if (method["name"] === "rpc.discover")
       throw new Error("reserved method name rpc.discover");
+    validateErrorMetadata(method);
     const meta = methodMetadata(method);
     if (
       meta.web === true &&

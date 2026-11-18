@@ -1,5 +1,6 @@
 import Ajv from "ajv";
 import standaloneCode from "ajv/dist/standalone/index.js";
+import { validateErrorMetadata } from "./error-metadata";
 import { methodMetadata } from "./exposure";
 import {
   emitSchemaType,
@@ -14,6 +15,7 @@ import {
   policyTemplate,
   validatorsTemplate,
 } from "./generator-templates";
+
 type Obj = Record<string, unknown>;
 type Policy = Record<
   string,
@@ -93,6 +95,7 @@ function parseMethod(
 ) {
   const where = `methods[${index}]`;
   const method = object(value, where);
+  validateErrorMetadata(method);
   const metadata = methodMetadata(method);
   const name = method["name"];
   if (typeof name !== "string" || !methodName.test(name) || names.has(name))

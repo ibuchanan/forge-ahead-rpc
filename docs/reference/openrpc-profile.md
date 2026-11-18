@@ -12,3 +12,34 @@ The generator supports OpenRPC `1.3.2` and JSON Schema draft-07 semantics (Ajv 8
 - Input and output standalone Ajv validators compile without coercion, defaults, removal of additional properties, or normalization. Validation does not mutate input. Handwritten handlers are never regenerated.
 
 Default CLI paths: `examples/tracer/openrpc.json` and `examples/tracer/generated`. `bun run scripts/generate-tracer.ts generate [spec.json] [output-dir]` writes `contract.ts`, `validators.js`, `validators.d.ts`, and `web-policy.ts` (the reviewed web maximum). `bun run scripts/generate-tracer.ts check [spec.json] [output-dir]` detects drift without writing. `bun run typecheck` checks handler-map and typed-caller mismatches. The in-memory JSON-RPC dispatcher does not provide authentication or transport security.
+
+## Public error metadata
+
+Methods may declare `errors`: an array of inline objects with a finite integer
+`code`, a string `message`, and optional `data`. Codes must be unique within the
+method. `data` is static public JSON metadata, not JSON Schema: null, booleans,
+finite numbers, strings, arrays, and plain objects are supported recursively.
+Undefined values, sparse arrays, cycles, functions, symbols, big integers, and
+non-JSON objects are rejected. Error `$ref` objects are not supported; neither
+are component error references. Generation and web dispatcher construction use
+the same validation rules, with method/field diagnostics.
+
+The optional method extension `x-retryable-errors` is an array of unique integer
+codes declared in that method's `errors`. A listed code classifies a failure as
+potentially transient; it does not promise success on retry. With an explicit
+list, unlisted errors are not classified as retryable by this extension. An
+omitted list means classification is unspecified. Explicit empty arrays remain
+empty; omitted fields remain absent.
+
+Both fields are preserved in `publicDocument` and context-selected
+`rpc.discover` for exposed methods only. Only inline `code`, `message`, and
+`data` are projected; arbitrary extensions and `x-forge-ahead` policy remain
+private. Declare only metadata intended for public discovery. These declarations
+are separate from the executable error catalog and do not alter runtime error
+sanitization, authorization, auditing, HTTP statuses, or generated success
+input/output types and validators.
+
+Retry classification is advisory only: no automatic retries, backoff, or
+scheduling is added. It establishes neither idempotency nor permission to repeat
+a mutation after an uncertain outcome. Clients must separately establish safe
+repetition, retry budgets, and delay policy.

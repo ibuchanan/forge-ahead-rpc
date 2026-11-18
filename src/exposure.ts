@@ -86,6 +86,20 @@ export function webDocument(
       ...(typeof method.description === "string"
         ? { description: method.description }
         : {}),
+      ...(method.errors !== undefined
+        ? {
+            errors: method.errors.map((error) => ({
+              code: error.code,
+              message: error.message,
+              ...(error.data !== undefined
+                ? { data: structuredClone(error.data) }
+                : {}),
+            })),
+          }
+        : {}),
+      ...(method["x-retryable-errors"] !== undefined
+        ? { "x-retryable-errors": [...method["x-retryable-errors"]] }
+        : {}),
       paramStructure: "by-name" as const,
       params: method.params.map((param) => ({
         name: param.name,
